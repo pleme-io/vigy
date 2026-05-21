@@ -97,6 +97,27 @@ use tatara_lisp_eval::{
 use thiserror::Error;
 use vigy_types::{Condition, ConditionStatus, ReconcileAction, ReconcileKind};
 
+// Re-exports — hosts that ship their own HostExtension need access to
+// the lisp surface to register intrinsics. Exposing these here keeps
+// the dependency story clean ("add vigy-eval"; no tatara-lisp dep
+// needed for host code).
+pub use tatara_lisp::Span;
+pub use tatara_lisp_eval::{
+    Arity as ArityRe, EvalError as EvalErrorRe, Interpreter as InterpreterRe, Value as LispValueRe,
+};
+/// Re-exported `tatara_lisp_eval::Arity`. Host extensions specify the
+/// arity of their custom intrinsics with this.
+pub type ExtArity = Arity;
+/// Re-exported `tatara_lisp_eval::Value`. Host intrinsics return this
+/// from their callable.
+pub type ExtValue = LispValue;
+/// Re-exported `tatara_lisp_eval::Interpreter<VigyHost>` — the second
+/// argument to `HostExtension::install`.
+pub type ExtInterpreter = Interpreter<VigyHost>;
+/// Re-exported `tatara_lisp_eval::EvalError`. Host intrinsics return
+/// this for type mismatches / runtime errors.
+pub type ExtEvalError = EvalError;
+
 #[derive(Debug, Error)]
 pub enum EvalErr {
     #[error("parse: {0}")]
