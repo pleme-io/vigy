@@ -1,14 +1,20 @@
-//! Async facade over the SeaORM entities. Callers in vigy-runtime,
-//! vigy-rpc, etc. only touch `Store` — the SeaORM dependency stays
-//! contained.
+//! SeaORM-backed implementation of [`VigyStore`].
+//!
+//! Type alias `Store = SeaormStore` is kept for backwards compatibility
+//! with callers that pre-date the trait extraction; new code should
+//! refer to `SeaormStore` (or accept `Arc<dyn VigyStore>` for impl-
+//! agnostic use).
 
 use crate::entities::*;
+use crate::traits::VigyStore;
 use crate::Migrator;
+use async_trait::async_trait;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectOptions, Database, DatabaseConnection, EntityTrait,
     QueryFilter, QueryOrder, QuerySelect, Set,
 };
 use sea_orm_migration::MigratorTrait;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use thiserror::Error;
 use vigy_types::{Labels, Vigy, VigyId, VigyRun, VigyRunId};
@@ -29,11 +35,15 @@ pub enum StoreError {
 
 pub type Result<T> = std::result::Result<T, StoreError>;
 
-pub struct Store {
+/// Backwards-compat alias — new code should use `SeaormStore` directly
+/// or accept `Arc<dyn VigyStore>` for impl-agnostic consumption.
+pub type Store = SeaormStore;
+
+pub struct SeaormStore {
     db: DatabaseConnection,
 }
 
-impl Store {
+impl SeaormStore {
     /// Open / create the SQLite DB at the given path. Runs pending
     /// migrations automatically.
     pub async fn open(path: &Path) -> Result<Self> {
@@ -192,8 +202,8 @@ impl Store {
     pub async fn save_kv(
         &self,
         vigy_id: &VigyId,
-        dirty: &std::collections::BTreeMap<String, serde_json::Value>,
-        deleted: &std::collections::BTreeSet<String>,
+        dirty: &BTreeMap<String, serde_json::Value>,
+        deleted: &BTreeSet<String>,
     ) -> Result<()> {
         let now = time::OffsetDateTime::now_utc()
             .format(&time::format_description::well_known::Rfc3339)
@@ -225,6 +235,59 @@ impl Store {
                 .await;
         }
         Ok(())
+    }
+}
+
+// ── Trait impl ─────────────────────────────────────────────────
+//
+// Delegates to the inherent methods so the SeaORM impl can be
+// consumed either via the inherent surface (typed errors, no Box
+// indirection) or via the trait (impl-agnostic, dynamic dispatch).
+// Both paths are equivalent.
+
+#[async_trait]
+impl VigyStore for SeaormStore {
+    async fn upsert_vigy(&self, vigy: &Vigy) -> crate::traits::Result<()> {
+        SeaormStore::upsert_vigy(self, vigy).await
+    }
+    async fn get_vigy(&self, id: &VigyId) -> crate::traits::Result<Vigy> {
+        SeaormStore::get_vigy(self, id).await
+    }
+    async fn list_vigies(
+        &self,
+        label_selector: Option<&str>,
+    ) -> crate::traits::Result<Vec<Vigy>> {
+        SeaormStore::list_vigies(self, label_selector).await
+    }
+    async fn set_enabled(&self, id: &VigyId, enabled: bool) -> crate::traits::Result<()> {
+        SeaormStore::set_enabled(self, id, enabled).await
+    }
+    async fn delete_vigy(&self, id: &VigyId) -> crate::traits::Result<bool> {
+        SeaormStore::delete_vigy(self, id).await
+    }
+    async fn insert_run(&self, run: &VigyRun) -> crate::traits::Result<()> {
+        SeaormStore::insert_run(self, run).await
+    }
+    async fn recent_runs(
+        &self,
+        vigy_id: &VigyId,
+        limit: u64,
+    ) -> crate::traits::Result<Vec<VigyRun>> {
+        SeaormStore::recent_runs(self, vigy_id, limit).await
+    }
+    async fn load_kv(
+        &self,
+        vigy_id: &VigyId,
+    ) -> crate::traits::Result<BTreeMap<String, serde_json::Value>> {
+        SeaormStore::load_kv(self, vigy_id).await
+    }
+    async fn save_kv(
+        &self,
+        vigy_id: &VigyId,
+        dirty: &BTreeMap<String, serde_json::Value>,
+        deleted: &BTreeSet<String>,
+    ) -> crate::traits::Result<()> {
+        SeaormStore::save_kv(self, vigy_id, dirty, deleted).await
     }
 }
 

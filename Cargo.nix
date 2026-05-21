@@ -13608,6 +13608,10 @@ rec {
             packageId = "async-trait";
           }
           {
+            name = "parking_lot";
+            packageId = "parking_lot";
+          }
+          {
             name = "sea-orm";
             packageId = "sea-orm";
             features = [ "sqlx-sqlite" "runtime-tokio-rustls" "macros" "with-time" "with-uuid" ];

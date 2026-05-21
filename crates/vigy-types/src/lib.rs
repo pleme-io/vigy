@@ -12,6 +12,7 @@ pub mod error;
 pub mod id;
 pub mod label;
 pub mod run;
+pub mod schedule;
 pub mod state;
 pub mod vigy;
 
@@ -20,5 +21,6 @@ pub use error::{Error, Result};
 pub use id::{VigyId, VigyRunId};
 pub use label::Labels;
 pub use run::VigyRun;
+pub use schedule::{FixedSchedule, Schedule, ScheduleSpec};
 pub use state::{Condition, ConditionStatus, VigyState};
 pub use vigy::{TickInterval, Vigy};

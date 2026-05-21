@@ -288,11 +288,25 @@ const KV_PREV_TICK_MS: &str = "__sys::prev_tick_ms";
 /// Execute one tick of a vigy through the supplied reconciler.
 /// Handles the persistence sandwich — hydrate kv before, save dirty
 /// after — so reconciler impls can be pure with respect to storage.
+///
+/// Each tick runs inside a `tracing::info_span!("vigy.tick", …)` so
+/// distributed tracing falls out of the existing tracing-subscriber
+/// configuration. Action emissions emit a structured event inside
+/// that span so traces show every reconcile action with kind +
+/// result + message.
 async fn run_once_with(
     store: &vigy_store::Store,
     vigy: &Vigy,
     reconciler: &dyn Reconciler,
 ) -> VigyRun {
+    let span = tracing::info_span!(
+        "vigy.tick",
+        vigy_id = %vigy.id,
+        vigy_name = %vigy.name,
+        tick_interval_ms = vigy.tick_interval.as_millis(),
+    );
+    let _enter = span.enter();
+
     let now = time::OffsetDateTime::now_utc();
     let tick_start_ms = (now.unix_timestamp_nanos() / 1_000_000) as i64;
 
@@ -330,6 +344,28 @@ async fn run_once_with(
 
     match reconciler.tick(host).await {
         Ok(populated) => {
+            // Emit a structured event per action so distributed traces
+            // see every reconcile decision with its typed kind, payload
+            // size, and result (if the action was pre-resolved).
+            for action in &populated.actions {
+                tracing::event!(
+                    tracing::Level::DEBUG,
+                    kind = ?action.kind,
+                    has_payload = action.payload.is_some(),
+                    result = ?action.result,
+                    "vigy.action",
+                );
+            }
+            // Per-tick summary at INFO so even a tracing filter that
+            // suppresses DEBUG sees one line per tick.
+            tracing::info!(
+                action_count = populated.actions.len(),
+                kv_writes = populated.kv_dirty.len(),
+                kv_deletes = populated.kv_deleted.len(),
+                conditions = populated.conditions.len(),
+                "vigy.tick.completed",
+            );
+
             let dirty: std::collections::BTreeMap<String, serde_json::Value> = populated
                 .kv_dirty
                 .iter()
@@ -343,7 +379,10 @@ async fn run_once_with(
             let actions: Vec<ReconcileAction> = populated.actions;
             run.complete_ok(actions)
         }
-        Err(e) => run.complete_failed(format!("{e}")),
+        Err(e) => {
+            tracing::warn!(vigy_id = %vigy.id, err = %e, "vigy.tick.failed");
+            run.complete_failed(format!("{e}"))
+        }
     }
 }
 

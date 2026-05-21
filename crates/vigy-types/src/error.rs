@@ -26,4 +26,10 @@ pub enum Error {
 
     #[error("serde: {0}")]
     Serde(#[from] serde_json::Error),
+
+    #[error("schedule variant {variant} not yet implemented ({detail})")]
+    ScheduleNotYetImplemented {
+        variant: &'static str,
+        detail: String,
+    },
 }
