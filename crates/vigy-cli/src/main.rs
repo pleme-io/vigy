@@ -86,9 +86,14 @@ enum Cmd {
         id: Option<String>,
     },
     Serve {
-        /// (gRPC + REST + GraphQL bind) — placeholder until API crates land.
-        #[arg(long, default_value = "127.0.0.1:38821")]
-        bind: String,
+        /// REST bind address (axum). Defaults to 127.0.0.1:38821.
+        /// `--bind` is kept as a deprecated alias matching the v0.1
+        /// pre-substrate CLI shape; new invocations should prefer
+        /// `--addr` to match the pleme-io substrate convention used
+        /// by every other tool that ships a `<bin> serve --addr`
+        /// pattern (namimado, kekkai, mamorigami, …).
+        #[arg(long, alias = "bind", default_value = "127.0.0.1:38821")]
+        addr: String,
     },
 }
 
@@ -239,14 +244,23 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        Cmd::Serve { bind } => {
+        Cmd::Serve { addr } => {
             println!(
-                "{} runtime live (db={}). API servers (gRPC+GraphQL+REST) bind at {bind} — not yet implemented.",
+                "{} runtime live (db={}). REST + Swagger UI at http://{addr}/swagger — gRPC + GraphQL TODO.",
                 "▶".green().bold(),
                 db.display()
             );
             println!("{}", "ticking registered vigies in the background…".dimmed());
-            // Idle main; tick tasks are running.
+            // Spawn REST handler. gRPC + GraphQL bind to follow-up
+            // ports once their handler bodies land.
+            let rt_clone = rt.clone();
+            let addr_clone = addr.clone();
+            tokio::spawn(async move {
+                if let Err(e) = vigy_rest::serve(rt_clone, &addr_clone).await {
+                    tracing::error!(err = %e, "vigy-rest server exited");
+                }
+            });
+            // Idle main; tick tasks + REST are running.
             tokio::signal::ctrl_c().await?;
             println!("\n{}", "shutting down".dimmed());
         }

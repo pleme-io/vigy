@@ -1,0 +1,5 @@
+{
+  "git+https://github.com/pleme-io/tatara-lisp#0.2.0": "1j1j7jpla8bp6s8k2fn0ksgfmw608lkm1l4q9s2vnlbg96j79g7l",
+  "git+https://github.com/pleme-io/tatara-lisp#tatara-lisp-derive@0.2.0": "1j1j7jpla8bp6s8k2fn0ksgfmw608lkm1l4q9s2vnlbg96j79g7l",
+  "git+https://github.com/pleme-io/tatara-lisp#tatara-lisp-eval@0.2.0": "1j1j7jpla8bp6s8k2fn0ksgfmw608lkm1l4q9s2vnlbg96j79g7l"
+}

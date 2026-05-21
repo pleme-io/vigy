@@ -60,7 +60,6 @@ async-graphql-axum = "7"
 # REST + OpenAPI (handlers derived from spec via utoipa)
 axum = "0.7"
 utoipa = { version = "5", features = ["axum_extras", "uuid", "time"] }
-utoipa-swagger-ui = { version = "8", features = ["axum"] }
 utoipa-axum = "0.1"
 tower = "0.5"
 tower-http = { version = "0.6", features = ["trace", "cors"] }

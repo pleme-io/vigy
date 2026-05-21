@@ -15,11 +15,16 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
 use utoipa::{OpenApi, ToSchema};
-use utoipa_swagger_ui::SwaggerUi;
 use vigy_runtime::RuntimeHandle;
 use vigy_types::{Labels, TickInterval, Vigy, VigyId, VigyRun, VigyState};
 
 /// Build the axum Router for the REST surface. Caller `.bind()`s it.
+///
+/// The OpenAPI spec is exposed at `GET /openapi.json` — operators can
+/// point any external Swagger UI / Redoc / Stoplight Studio instance
+/// at that URL. We deliberately don't bundle Swagger UI itself because
+/// its build script needs network access at compile time, which breaks
+/// hermetic Nix builds.
 pub fn router(rt: RuntimeHandle) -> Router {
     let state = Arc::new(rt);
     Router::new()
@@ -32,8 +37,12 @@ pub fn router(rt: RuntimeHandle) -> Router {
         .route("/v1/vigies/:id/tick", post(tick_vigy))
         .route("/v1/vigies/:id/enable", post(enable_vigy))
         .route("/v1/vigies/:id/disable", post(disable_vigy))
-        .merge(SwaggerUi::new("/swagger").url("/openapi.json", ApiDoc::openapi()))
+        .route("/openapi.json", get(openapi_json))
         .with_state(state)
+}
+
+async fn openapi_json() -> impl IntoResponse {
+    Json(ApiDoc::openapi())
 }
 
 #[derive(OpenApi)]
@@ -268,7 +277,10 @@ fn err_str(code: StatusCode, msg: &str) -> axum::response::Response {
 /// One-line server bootstrap. Used by `vigy serve`.
 pub async fn serve(rt: RuntimeHandle, bind: &str) -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(bind).await?;
-    tracing::info!(addr = %bind, "vigy-rest listening (Swagger UI at /swagger)");
+    tracing::info!(
+        addr = %bind,
+        "vigy-rest listening (OpenAPI spec at /openapi.json)"
+    );
     let router = router(rt);
     axum::serve(listener, router).await?;
     Ok(())

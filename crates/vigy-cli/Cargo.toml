@@ -15,6 +15,7 @@ path = "src/main.rs"
 vigy-types = { path = "../vigy-types" }
 vigy-store = { path = "../vigy-store" }
 vigy-runtime = { path = "../vigy-runtime" }
+vigy-rest = { path = "../vigy-rest" }
 anyhow = { workspace = true }
 clap = { workspace = true }
 colored = { workspace = true }

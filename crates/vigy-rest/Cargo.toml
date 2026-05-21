@@ -21,5 +21,4 @@ axum = { workspace = true }
 tower = { workspace = true }
 tower-http = { workspace = true }
 utoipa = { workspace = true }
-utoipa-swagger-ui = { workspace = true }
 utoipa-axum = { workspace = true }
