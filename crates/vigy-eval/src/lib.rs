@@ -168,13 +168,29 @@ pub struct HostEvent {
     pub message: String,
 }
 
-/// Evaluate a vigy program against a fresh host. Returns the host so
-/// the runtime can drain the buffers + persist dirty kv keys.
-pub fn evaluate(program: &str, mut host: VigyHost) -> Result<VigyHost> {
+/// Evaluate a vigy program against a fresh host. Convenience wrapper
+/// over the trait-based path with the standard extension bundle —
+/// the entrypoint vigy-runtime uses by default. Embedders that want
+/// additional intrinsics call [`evaluate_with_extensions`] directly.
+pub fn evaluate(program: &str, host: VigyHost) -> Result<VigyHost> {
+    evaluate_with_extensions(program, host, &standard_extensions())
+}
+
+/// Evaluate a program with a custom extension bundle. Hosts (mado,
+/// tear-daemon) compose `standard_extensions()` with their own
+/// [`HostExtension`] impls — e.g. mado adds `MadoTearExtension` that
+/// registers `(mado-tear-list-sessions)` / `(mado-tear-attach)`
+/// intrinsics, the rest of the framework keeps working unchanged.
+pub fn evaluate_with_extensions(
+    program: &str,
+    mut host: VigyHost,
+    extensions: &[ExtensionHandle],
+) -> Result<VigyHost> {
     let mut interp: Interpreter<VigyHost> = Interpreter::new();
     install_full_stdlib_with(&mut interp, &mut host);
-    install_vigy_intrinsics(&mut interp);
-
+    for ext in extensions {
+        ext.install(&mut interp);
+    }
     let forms = read_spanned(program).map_err(|e| EvalErr::Parse(format!("{e}")))?;
     interp
         .eval_program(&forms, &mut host)
@@ -182,9 +198,10 @@ pub fn evaluate(program: &str, mut host: VigyHost) -> Result<VigyHost> {
     Ok(host)
 }
 
-/// Register every vigy framework intrinsic. Split out so an embedder
-/// (mado, tear-daemon) that wants extra host-specific primitives can
-/// call this first then layer its own.
+/// Register every vigy framework intrinsic. Kept as a free function for
+/// the rare embedder that wants the entire bundle in one call without
+/// touching `Box<dyn HostExtension>`. Equivalent to installing the
+/// `standard_extensions()` list one at a time.
 pub fn install_vigy_intrinsics(interp: &mut Interpreter<VigyHost>) {
     install_action_intrinsics(interp);
     install_state_intrinsics(interp);
@@ -192,6 +209,149 @@ pub fn install_vigy_intrinsics(interp: &mut Interpreter<VigyHost>) {
     install_convergence_intrinsics(interp);
     install_scheduling_intrinsics(interp);
     install_diagnostic_intrinsics(interp);
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Traits — the compounding surface
+// ─────────────────────────────────────────────────────────────────
+
+/// Pluggable intrinsic pack. The framework ships six standard
+/// extensions (`Actions`, `State`, `Kv`, `Convergence`, `Scheduling`,
+/// `Diagnostics`) — together they form `standard_extensions()`. Hosts
+/// add their own by implementing this trait and passing their impls
+/// to `evaluate_with_extensions` alongside the standard set.
+///
+/// Implementations should be cheap to construct + cheap to clone; the
+/// runtime currently instantiates them per-tick (room to cache later
+/// once a real benchmark calls for it).
+pub trait HostExtension: Send + Sync {
+    /// Register every intrinsic this extension owns on the interpreter.
+    /// Idempotent within a single evaluation — registering twice on
+    /// the same interpreter overrides the prior binding (tatara-lisp's
+    /// default behaviour). Across different interpreter instances each
+    /// install is independent.
+    fn install(&self, interp: &mut Interpreter<VigyHost>);
+}
+
+/// Shared handle for a HostExtension. `Arc` chosen over `Box` so the
+/// reconciler can hand its extension list to spawn_blocking without
+/// requiring every extension to be `Clone` (some impls might hold
+/// non-cloneable resources like a `tonic::Channel`).
+pub type ExtensionHandle = std::sync::Arc<dyn HostExtension>;
+
+/// The six standard extensions, in the order they install on a fresh
+/// interpreter. Order doesn't matter today (no two extensions share
+/// an intrinsic name) but is documented for stability.
+pub fn standard_extensions() -> Vec<ExtensionHandle> {
+    use std::sync::Arc;
+    vec![
+        Arc::new(ActionsExtension),
+        Arc::new(StateExtension),
+        Arc::new(KvExtension),
+        Arc::new(ConvergenceExtension),
+        Arc::new(SchedulingExtension),
+        Arc::new(DiagnosticsExtension),
+    ]
+}
+
+/// Typed reconciler — what runs each tick. tatara-lisp evaluation is
+/// the default implementation ([`LispReconciler`]) but the trait lets
+/// any execution model (Rust-native, Wasm, HTTP webhook) participate
+/// in the same runtime loop.
+///
+/// Reconcilers consume the input `VigyHost` (with kv hydrated by the
+/// runtime + tick metadata stamped) and return the host with buffers
+/// populated. The runtime drains buffers + persists dirty kv keys
+/// after the trait method returns.
+#[async_trait::async_trait]
+pub trait Reconciler: Send + Sync {
+    async fn tick(&self, host: VigyHost) -> Result<VigyHost>;
+}
+
+/// The default reconciler — evaluates a tatara-lisp program with the
+/// supplied extension bundle. Constructible two ways:
+///
+///   - `LispReconciler::standard(program)` uses `standard_extensions()`.
+///   - `LispReconciler::with_extensions(program, exts)` for hosts
+///     that want additional intrinsics.
+///
+/// Holds an owned program + a shared extension list. Cheap to clone
+/// (Arcs all the way down) so the runtime can rebuild it on every
+/// vigy edit without paying for interpreter construction up-front.
+pub struct LispReconciler {
+    pub program: String,
+    pub extensions: Vec<ExtensionHandle>,
+}
+
+impl LispReconciler {
+    pub fn standard(program: impl Into<String>) -> Self {
+        Self {
+            program: program.into(),
+            extensions: standard_extensions(),
+        }
+    }
+
+    pub fn with_extensions(
+        program: impl Into<String>,
+        extensions: Vec<ExtensionHandle>,
+    ) -> Self {
+        Self {
+            program: program.into(),
+            extensions,
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl Reconciler for LispReconciler {
+    async fn tick(&self, host: VigyHost) -> Result<VigyHost> {
+        // Tatara-lisp eval is sync + CPU-bound. spawn_blocking keeps
+        // the tokio worker free; the reconciler returns its host
+        // verbatim once the lisp program finishes (or errors).
+        let program = self.program.clone();
+        let extensions = self.extensions.clone();
+        tokio::task::spawn_blocking(move || {
+            evaluate_with_extensions(&program, host, &extensions)
+        })
+        .await
+        .map_err(|e| EvalErr::Eval(format!("join: {e}")))?
+    }
+}
+
+/// A reconciler that does nothing. Tests + the "vigy is disabled"
+/// path use this to drive the runtime without any program. Returns
+/// the host unchanged.
+pub struct NoopReconciler;
+
+#[async_trait::async_trait]
+impl Reconciler for NoopReconciler {
+    async fn tick(&self, host: VigyHost) -> Result<VigyHost> {
+        Ok(host)
+    }
+}
+
+/// Composite reconciler — runs its children in order, threading the
+/// host through. Each child sees the buffer state the previous child
+/// wrote, so a chain can stack: "first reconciler observes from RPC,
+/// second writes a tatara-lisp policy over those observations."
+pub struct ChainReconciler {
+    pub children: Vec<Box<dyn Reconciler>>,
+}
+
+impl ChainReconciler {
+    pub fn new(children: Vec<Box<dyn Reconciler>>) -> Self {
+        Self { children }
+    }
+}
+
+#[async_trait::async_trait]
+impl Reconciler for ChainReconciler {
+    async fn tick(&self, mut host: VigyHost) -> Result<VigyHost> {
+        for child in &self.children {
+            host = child.tick(host).await?;
+        }
+        Ok(host)
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -696,6 +856,96 @@ fn parse_kind(
     }
 }
 
+// ─────────────────────────────────────────────────────────────────
+// Standard HostExtension impls — each delegates to its free install
+// function. Trivial unit structs so consumers can compose them by
+// reference (`standard_extensions()`) or by name in their own bundles.
+// ─────────────────────────────────────────────────────────────────
+
+/// Typed action verbs: vigy-noop / defer / pull / push / create /
+/// update / delete-action / apply / restart / emit.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ActionsExtension;
+impl HostExtension for ActionsExtension {
+    fn install(&self, interp: &mut Interpreter<VigyHost>) {
+        install_action_intrinsics(interp);
+    }
+}
+
+/// Structured state: vigy-desired / observed / condition.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct StateExtension;
+impl HostExtension for StateExtension {
+    fn install(&self, interp: &mut Interpreter<VigyHost>) {
+        install_state_intrinsics(interp);
+    }
+}
+
+/// Persistent KV: vigy-get / set / incr / has? / del.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct KvExtension;
+impl HostExtension for KvExtension {
+    fn install(&self, interp: &mut Interpreter<VigyHost>) {
+        install_kv_intrinsics(interp);
+    }
+}
+
+/// Convergence: vigy-once / mark-converged / converged?.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ConvergenceExtension;
+impl HostExtension for ConvergenceExtension {
+    fn install(&self, interp: &mut Interpreter<VigyHost>) {
+        install_convergence_intrinsics(interp);
+    }
+}
+
+/// Scheduling: vigy-tick / tick-count / since-last-tick /
+/// rate-limited? / backoff-ms.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SchedulingExtension;
+impl HostExtension for SchedulingExtension {
+    fn install(&self, interp: &mut Interpreter<VigyHost>) {
+        install_scheduling_intrinsics(interp);
+    }
+}
+
+/// Diagnostics: vigy-log / trace / metric / event.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct DiagnosticsExtension;
+impl HostExtension for DiagnosticsExtension {
+    fn install(&self, interp: &mut Interpreter<VigyHost>) {
+        install_diagnostic_intrinsics(interp);
+    }
+}
+
+/// Construct a HostExtension from a closure. Useful for one-off
+/// host-specific intrinsics that don't deserve their own named struct:
+///
+/// ```ignore
+/// let mado_ext = closure_extension(|interp| {
+///     interp.register_fn("mado-tear-list-sessions", Arity::Exact(0),
+///         |_args, host, _sp| { /* ... */ });
+/// });
+/// ```
+pub fn closure_extension<F>(f: F) -> ExtensionHandle
+where
+    F: Fn(&mut Interpreter<VigyHost>) + Send + Sync + 'static,
+{
+    struct ClosureExtension<F>(F);
+    impl<F: Fn(&mut Interpreter<VigyHost>) + Send + Sync + 'static> HostExtension
+        for ClosureExtension<F>
+    {
+        fn install(&self, interp: &mut Interpreter<VigyHost>) {
+            (self.0)(interp);
+        }
+    }
+    std::sync::Arc::new(ClosureExtension(f))
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────────
+
 fn lisp_string(v: &LispValue, sp: tatara_lisp::Span) -> std::result::Result<String, EvalError> {
     match v {
         LispValue::Str(s) => Ok(s.to_string()),
@@ -1042,6 +1292,80 @@ mod tests {
     }
 
     // ── diagnostics ────────────────────────────────────────────
+
+    // ── trait surface ──────────────────────────────────────────
+
+    #[tokio::test]
+    async fn lisp_reconciler_runs_a_program() {
+        let r = LispReconciler::standard("(vigy-noop)");
+        let host = r.tick(VigyHost::default()).await.unwrap();
+        assert_eq!(host.actions.len(), 1);
+        assert_eq!(host.actions[0].kind, ReconcileKind::Noop);
+    }
+
+    #[tokio::test]
+    async fn noop_reconciler_returns_host_unchanged() {
+        let r = NoopReconciler;
+        let mut host = VigyHost::default();
+        host.tick_start_ms = 42;
+        let after = r.tick(host).await.unwrap();
+        assert_eq!(after.tick_start_ms, 42);
+        assert!(after.actions.is_empty());
+    }
+
+    #[tokio::test]
+    async fn chain_reconciler_threads_host_through_children() {
+        // Three children, each appending a different action via
+        // separate LispReconciler instances. Proves composition + that
+        // the host buffers accumulate across the chain.
+        let chain = ChainReconciler::new(vec![
+            Box::new(LispReconciler::standard("(vigy-pull \"first\")")),
+            Box::new(LispReconciler::standard("(vigy-push \"second\")")),
+            Box::new(LispReconciler::standard("(vigy-apply \"third\")")),
+        ]);
+        let host = chain.tick(VigyHost::default()).await.unwrap();
+        let kinds: Vec<_> = host.actions.iter().map(|a| a.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                ReconcileKind::Pull,
+                ReconcileKind::Push,
+                ReconcileKind::Apply,
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn custom_host_extension_registers_intrinsic() {
+        // Closure-built extension that registers a custom intrinsic.
+        // Then a tatara-lisp program that calls it — proves the trait
+        // is a real extension point, not just type theater.
+        let custom = closure_extension(|interp| {
+            interp.register_fn(
+                "mado-tear-list-sessions",
+                Arity::Exact(0),
+                |_args: &[LispValue], host: &mut VigyHost, _sp| {
+                    host.actions
+                        .push(ReconcileAction::custom(serde_json::json!({"from": "mado"})));
+                    Ok(LispValue::Int(3))
+                },
+            );
+        });
+
+        let mut extensions = standard_extensions();
+        extensions.push(custom);
+
+        let r = LispReconciler::with_extensions(
+            r#"
+            (vigy-set "session_count" (mado-tear-list-sessions))
+            "#,
+            extensions,
+        );
+        let host = r.tick(VigyHost::default()).await.unwrap();
+        assert_eq!(host.kv.get("session_count").and_then(|v| v.as_i64()), Some(3));
+        assert_eq!(host.actions.len(), 1);
+        assert_eq!(host.actions[0].kind, ReconcileKind::Custom);
+    }
 
     #[test]
     fn trace_metric_event() {

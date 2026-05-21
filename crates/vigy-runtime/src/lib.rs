@@ -49,7 +49,7 @@ use tokio::task::JoinHandle;
 use tokio::time::sleep;
 use tracing::{debug, error, info, warn};
 
-use vigy_eval::{evaluate, VigyHost};
+use vigy_eval::{ExtensionHandle, LispReconciler, Reconciler, VigyHost};
 use vigy_store::{Store, StoreError};
 use vigy_types::{ReconcileAction, ResultStatus, Vigy, VigyId, VigyRun};
 
@@ -76,6 +76,11 @@ struct Inner {
     store: Store,
     tasks: Mutex<HashMap<VigyId, JoinHandle<()>>>,
     bus: broadcast::Sender<VigyRun>,
+    /// Shared extension bundle every LispReconciler in this runtime
+    /// gets. Hosts (mado, tear-daemon) construct the runtime with
+    /// `with_extensions(...)` to add their own intrinsics; the default
+    /// is `vigy_eval::standard_extensions()`.
+    extensions: Vec<ExtensionHandle>,
 }
 
 const EVENT_BUS_CAPACITY: usize = 1024;
@@ -86,22 +91,36 @@ impl RuntimeHandle {
     /// tick tasks for any enabled vigies recorded there.
     pub async fn open(path: &Path) -> Result<Self> {
         let store = Store::open(path).await?;
-        Self::with_store(store).await
+        Self::with_store(store, vigy_eval::standard_extensions()).await
     }
 
     /// In-memory store — only useful in tests + ephemeral one-shot runs.
     pub async fn open_in_memory() -> Result<Self> {
         let store = Store::open_in_memory().await?;
-        Self::with_store(store).await
+        Self::with_store(store, vigy_eval::standard_extensions()).await
     }
 
-    async fn with_store(store: Store) -> Result<Self> {
+    /// Open with a custom extension bundle. mado calls this with
+    /// `standard_extensions() ++ [MadoTearExtension]`; tear-daemon
+    /// calls it with `standard_extensions() ++ [TearCoreExtension]`.
+    /// Pure operators (`vigy serve`) take the default via [`open`] which
+    /// uses `vigy_eval::standard_extensions()` only.
+    pub async fn open_with_extensions(
+        path: &Path,
+        extensions: Vec<ExtensionHandle>,
+    ) -> Result<Self> {
+        let store = Store::open(path).await?;
+        Self::with_store(store, extensions).await
+    }
+
+    async fn with_store(store: Store, extensions: Vec<ExtensionHandle>) -> Result<Self> {
         let (bus, _) = broadcast::channel(EVENT_BUS_CAPACITY);
         let handle = Self {
             inner: Arc::new(Inner {
                 store,
                 tasks: Mutex::new(HashMap::new()),
                 bus,
+                extensions,
             }),
         };
         // Resume any pre-existing vigies.
@@ -163,7 +182,22 @@ impl RuntimeHandle {
     /// `carve gate`-style CI hooks + the `vigy <id> tick` CLI.
     pub async fn tick_now(&self, id: &VigyId) -> Result<VigyRun> {
         let vigy = self.inner.store.get_vigy(id).await?;
-        let run = run_once(&self.inner.store, &vigy).await;
+        let run = run_once(&self.inner.store, &vigy, &self.inner.extensions).await;
+        self.inner.store.insert_run(&run).await?;
+        let _ = self.inner.bus.send(run.clone());
+        Ok(run)
+    }
+
+    /// Force-tick a vigy through a caller-supplied reconciler. Useful
+    /// for tests that swap in NoopReconciler / ChainReconciler / a
+    /// custom impl without changing the vigy's stored program.
+    pub async fn tick_now_with(
+        &self,
+        id: &VigyId,
+        reconciler: &dyn Reconciler,
+    ) -> Result<VigyRun> {
+        let vigy = self.inner.store.get_vigy(id).await?;
+        let run = run_once_with(&self.inner.store, &vigy, reconciler).await;
         self.inner.store.insert_run(&run).await?;
         let _ = self.inner.bus.send(run.clone());
         Ok(run)
@@ -218,7 +252,7 @@ async fn tick_loop(inner: Arc<Inner>, vigy: Vigy) {
             }
         };
 
-        let run = run_once(&inner.store, &current).await;
+        let run = run_once(&inner.store, &current, &inner.extensions).await;
         let failed = matches!(run.result, ResultStatus::Failed);
 
         if let Err(e) = inner.store.insert_run(&run).await {
@@ -251,15 +285,17 @@ fn backoff_for(failures: u32) -> Duration {
 const KV_TICK_COUNT: &str = "__sys::tick_count";
 const KV_PREV_TICK_MS: &str = "__sys::prev_tick_ms";
 
-/// Execute one tick of a vigy. Hydrates the persistent KV from the
-/// store before eval, drains buffers + saves dirty/deleted KV after.
-async fn run_once(store: &vigy_store::Store, vigy: &Vigy) -> VigyRun {
+/// Execute one tick of a vigy through the supplied reconciler.
+/// Handles the persistence sandwich — hydrate kv before, save dirty
+/// after — so reconciler impls can be pure with respect to storage.
+async fn run_once_with(
+    store: &vigy_store::Store,
+    vigy: &Vigy,
+    reconciler: &dyn Reconciler,
+) -> VigyRun {
     let now = time::OffsetDateTime::now_utc();
     let tick_start_ms = (now.unix_timestamp_nanos() / 1_000_000) as i64;
 
-    // Hydrate kv from the store. On the first tick this is empty; on
-    // every subsequent tick it carries forward whatever the previous
-    // tick's program set/incr'd, plus the reserved sys keys.
     let kv = match store.load_kv(&vigy.id).await {
         Ok(k) => k,
         Err(e) => {
@@ -268,8 +304,6 @@ async fn run_once(store: &vigy_store::Store, vigy: &Vigy) -> VigyRun {
         }
     };
 
-    // Bump the reserved tick counter + previous-tick-ms before eval so
-    // (vigy-tick-count) sees the correct N for THIS tick.
     let prior_tick_count = kv.get(KV_TICK_COUNT).and_then(|v| v.as_i64()).unwrap_or(0);
     let previous_tick_ms = kv.get(KV_PREV_TICK_MS).and_then(|v| v.as_i64());
     let tick_count = prior_tick_count + 1;
@@ -281,7 +315,6 @@ async fn run_once(store: &vigy_store::Store, vigy: &Vigy) -> VigyRun {
         kv,
         ..Default::default()
     };
-    // Reserved sys keys are auto-dirty so they persist forward.
     host.kv.insert(
         KV_TICK_COUNT.to_string(),
         serde_json::Value::Number(tick_count.into()),
@@ -295,11 +328,8 @@ async fn run_once(store: &vigy_store::Store, vigy: &Vigy) -> VigyRun {
 
     let run = VigyRun::started(vigy.id.clone());
 
-    match evaluate(&vigy.program, host) {
+    match reconciler.tick(host).await {
         Ok(populated) => {
-            // Persist kv changes (the program's writes + the auto-bumped
-            // sys keys). Errors here are warnings, not failures — the
-            // tick already completed successfully.
             let dirty: std::collections::BTreeMap<String, serde_json::Value> = populated
                 .kv_dirty
                 .iter()
@@ -315,6 +345,17 @@ async fn run_once(store: &vigy_store::Store, vigy: &Vigy) -> VigyRun {
         }
         Err(e) => run.complete_failed(format!("{e}")),
     }
+}
+
+/// Backwards-compatible default tick — builds a LispReconciler with the
+/// runtime's extensions and dispatches through [`run_once_with`].
+async fn run_once(
+    store: &vigy_store::Store,
+    vigy: &Vigy,
+    extensions: &[ExtensionHandle],
+) -> VigyRun {
+    let reconciler = LispReconciler::with_extensions(vigy.program.clone(), extensions.to_vec());
+    run_once_with(store, vigy, &reconciler).await
 }
 
 #[cfg(test)]
@@ -386,6 +427,51 @@ mod tests {
             .and_then(|v| v.as_i64())
             .unwrap_or(0);
         assert_eq!(tick_count, 3);
+    }
+
+    #[tokio::test]
+    async fn tick_now_with_swaps_reconciler() {
+        // Register a vigy whose stored program would emit a Noop. Then
+        // force-tick it with NoopReconciler (no actions), then with a
+        // ChainReconciler that runs two LispReconcilers in sequence —
+        // proving the runtime really dispatches through the trait, not
+        // through the stored program.
+        use vigy_eval::{ChainReconciler, LispReconciler, NoopReconciler};
+
+        let rt = RuntimeHandle::open_in_memory().await.unwrap();
+        let v = Vigy::new(
+            "swap-test",
+            "(vigy-noop)",
+            TickInterval::from_millis(100).unwrap(),
+        )
+        .unwrap();
+        let id = v.id.clone();
+        rt.register_or_update(v).await.unwrap();
+
+        // NoopReconciler: no actions.
+        let r1 = rt
+            .tick_now_with(&id, &NoopReconciler)
+            .await
+            .unwrap();
+        assert!(r1.actions.is_empty());
+
+        // ChainReconciler: two pulls in sequence.
+        let chain = ChainReconciler::new(vec![
+            Box::new(LispReconciler::standard("(vigy-pull \"a\")")),
+            Box::new(LispReconciler::standard("(vigy-pull \"b\")")),
+        ]);
+        let r2 = rt.tick_now_with(&id, &chain).await.unwrap();
+        assert_eq!(r2.actions.len(), 2);
+        assert_eq!(
+            r2.actions
+                .iter()
+                .map(|a| a.kind)
+                .collect::<Vec<_>>(),
+            vec![
+                vigy_types::ReconcileKind::Pull,
+                vigy_types::ReconcileKind::Pull,
+            ]
+        );
     }
 
     #[tokio::test]

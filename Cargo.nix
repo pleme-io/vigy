@@ -13238,6 +13238,10 @@ rec {
             packageId = "anyhow";
           }
           {
+            name = "async-trait";
+            packageId = "async-trait";
+          }
+          {
             name = "serde";
             packageId = "serde";
             features = [ "derive" ];
@@ -13262,6 +13266,11 @@ rec {
             name = "time";
             packageId = "time";
             features = [ "serde" "macros" "formatting" "parsing" ];
+          }
+          {
+            name = "tokio";
+            packageId = "tokio";
+            features = [ "rt-multi-thread" "macros" "sync" "time" "fs" "signal" "io-util" "net" ];
           }
           {
             name = "tracing";

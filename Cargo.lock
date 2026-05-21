@@ -3858,12 +3858,14 @@ name = "vigy-eval"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "serde",
  "serde_json",
  "tatara-lisp",
  "tatara-lisp-eval",
  "thiserror",
  "time",
+ "tokio",
  "tracing",
  "vigy-types",
 ]
