@@ -204,8 +204,9 @@ async fn get_state(
     };
     let state = VigyState {
         vigy_id: id,
-        desired: None,
-        observed: None,
+        desired: Default::default(),
+        observed: Default::default(),
+        conditions: Vec::new(),
         pending: runs.into_iter().next().map(|r| r.actions).unwrap_or_default(),
         captured_at: time::OffsetDateTime::now_utc(),
     };

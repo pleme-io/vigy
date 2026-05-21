@@ -163,7 +163,7 @@ impl RuntimeHandle {
     /// `carve gate`-style CI hooks + the `vigy <id> tick` CLI.
     pub async fn tick_now(&self, id: &VigyId) -> Result<VigyRun> {
         let vigy = self.inner.store.get_vigy(id).await?;
-        let run = run_once(&vigy);
+        let run = run_once(&self.inner.store, &vigy).await;
         self.inner.store.insert_run(&run).await?;
         let _ = self.inner.bus.send(run.clone());
         Ok(run)
@@ -218,7 +218,7 @@ async fn tick_loop(inner: Arc<Inner>, vigy: Vigy) {
             }
         };
 
-        let run = run_once(&current);
+        let run = run_once(&inner.store, &current).await;
         let failed = matches!(run.result, ResultStatus::Failed);
 
         if let Err(e) = inner.store.insert_run(&run).await {
@@ -244,21 +244,72 @@ fn backoff_for(failures: u32) -> Duration {
     Duration::from_secs(secs).min(MAX_BACKOFF)
 }
 
-/// Execute one tick of a vigy synchronously. The tatara-lisp eval is
-/// pure-CPU + bounded; running on the same task is fine.
-fn run_once(vigy: &Vigy) -> VigyRun {
+/// Reserved kv keys the runtime maintains automatically. Operator
+/// programs SHOULD NOT write these — read via `(vigy-tick-count)` etc.
+/// Persisting them in the same kv table keeps the framework state
+/// homogeneous (one round-trip per tick to load/save everything).
+const KV_TICK_COUNT: &str = "__sys::tick_count";
+const KV_PREV_TICK_MS: &str = "__sys::prev_tick_ms";
+
+/// Execute one tick of a vigy. Hydrates the persistent KV from the
+/// store before eval, drains buffers + saves dirty/deleted KV after.
+async fn run_once(store: &vigy_store::Store, vigy: &Vigy) -> VigyRun {
     let now = time::OffsetDateTime::now_utc();
     let tick_start_ms = (now.unix_timestamp_nanos() / 1_000_000) as i64;
-    let host = VigyHost {
-        tick_start_ms,
-        actions: Vec::new(),
-        log: Vec::new(),
+
+    // Hydrate kv from the store. On the first tick this is empty; on
+    // every subsequent tick it carries forward whatever the previous
+    // tick's program set/incr'd, plus the reserved sys keys.
+    let kv = match store.load_kv(&vigy.id).await {
+        Ok(k) => k,
+        Err(e) => {
+            tracing::warn!(vigy_id = %vigy.id, err = %e, "kv load failed; tick proceeds with empty kv");
+            std::collections::BTreeMap::new()
+        }
     };
+
+    // Bump the reserved tick counter + previous-tick-ms before eval so
+    // (vigy-tick-count) sees the correct N for THIS tick.
+    let prior_tick_count = kv.get(KV_TICK_COUNT).and_then(|v| v.as_i64()).unwrap_or(0);
+    let previous_tick_ms = kv.get(KV_PREV_TICK_MS).and_then(|v| v.as_i64());
+    let tick_count = prior_tick_count + 1;
+
+    let mut host = VigyHost {
+        tick_start_ms,
+        previous_tick_ms,
+        tick_count,
+        kv,
+        ..Default::default()
+    };
+    // Reserved sys keys are auto-dirty so they persist forward.
+    host.kv.insert(
+        KV_TICK_COUNT.to_string(),
+        serde_json::Value::Number(tick_count.into()),
+    );
+    host.kv.insert(
+        KV_PREV_TICK_MS.to_string(),
+        serde_json::Value::Number(tick_start_ms.into()),
+    );
+    host.kv_dirty.insert(KV_TICK_COUNT.to_string());
+    host.kv_dirty.insert(KV_PREV_TICK_MS.to_string());
 
     let run = VigyRun::started(vigy.id.clone());
 
     match evaluate(&vigy.program, host) {
         Ok(populated) => {
+            // Persist kv changes (the program's writes + the auto-bumped
+            // sys keys). Errors here are warnings, not failures — the
+            // tick already completed successfully.
+            let dirty: std::collections::BTreeMap<String, serde_json::Value> = populated
+                .kv_dirty
+                .iter()
+                .filter_map(|k| populated.kv.get(k).map(|v| (k.clone(), v.clone())))
+                .collect();
+            if !dirty.is_empty() || !populated.kv_deleted.is_empty() {
+                if let Err(e) = store.save_kv(&vigy.id, &dirty, &populated.kv_deleted).await {
+                    tracing::warn!(vigy_id = %vigy.id, err = %e, "kv save failed; in-memory state lost");
+                }
+            }
             let actions: Vec<ReconcileAction> = populated.actions;
             run.complete_ok(actions)
         }
@@ -305,6 +356,69 @@ mod tests {
         rt.register_or_update(v).await.unwrap();
         rt.disable(&id).await.unwrap();
         assert!(!rt.get(&id).await.unwrap().enabled);
+    }
+
+    #[tokio::test]
+    async fn kv_persists_across_ticks() {
+        let rt = RuntimeHandle::open_in_memory().await.unwrap();
+        // A vigy that increments a counter on each tick.
+        let v = Vigy::new(
+            "counter",
+            "(vigy-incr \"hits\")",
+            TickInterval::from_millis(100).unwrap(),
+        )
+        .unwrap();
+        let id = v.id.clone();
+        rt.register_or_update(v).await.unwrap();
+
+        // Tick three times and read the kv state via the store each time.
+        rt.tick_now(&id).await.unwrap();
+        rt.tick_now(&id).await.unwrap();
+        rt.tick_now(&id).await.unwrap();
+
+        let kv = rt.inner.store.load_kv(&id).await.unwrap();
+        let hits = kv.get("hits").and_then(|v| v.as_i64()).unwrap_or(0);
+        assert_eq!(hits, 3, "counter should have incremented once per tick");
+
+        // Reserved sys keys should also be populated.
+        let tick_count = kv
+            .get("__sys::tick_count")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+        assert_eq!(tick_count, 3);
+    }
+
+    #[tokio::test]
+    async fn convergence_flag_survives_ticks() {
+        let rt = RuntimeHandle::open_in_memory().await.unwrap();
+        // A vigy that converges on its first tick + records the state.
+        let v = Vigy::new(
+            "converger",
+            r#"
+            (vigy-set "is_converged_now" (vigy-converged? "goal"))
+            (vigy-mark-converged "goal")
+            "#,
+            TickInterval::from_millis(100).unwrap(),
+        )
+        .unwrap();
+        let id = v.id.clone();
+        rt.register_or_update(v).await.unwrap();
+
+        rt.tick_now(&id).await.unwrap();
+        let kv1 = rt.inner.store.load_kv(&id).await.unwrap();
+        // First tick: marked AFTER reading, so reads false.
+        assert_eq!(
+            kv1.get("is_converged_now"),
+            Some(&serde_json::Value::Bool(false))
+        );
+
+        rt.tick_now(&id).await.unwrap();
+        let kv2 = rt.inner.store.load_kv(&id).await.unwrap();
+        // Second tick: already marked, so reads true.
+        assert_eq!(
+            kv2.get("is_converged_now"),
+            Some(&serde_json::Value::Bool(true))
+        );
     }
 
     #[tokio::test]

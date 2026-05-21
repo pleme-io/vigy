@@ -166,6 +166,66 @@ impl Store {
             .await?;
         rows.into_iter().map(model_to_run).collect()
     }
+
+    // ---------- persistent KV (per-vigy scoped) ----------
+
+    /// Load every kv pair for a vigy. Called by the runtime at the
+    /// start of each tick.
+    pub async fn load_kv(
+        &self,
+        vigy_id: &VigyId,
+    ) -> Result<std::collections::BTreeMap<String, serde_json::Value>> {
+        let rows = VigyKvEntity::find()
+            .filter(vigy_kv::Column::VigyId.eq(vigy_id.to_string()))
+            .all(&self.db)
+            .await?;
+        let mut out = std::collections::BTreeMap::new();
+        for row in rows {
+            let v: serde_json::Value = serde_json::from_str(&row.value_json)?;
+            out.insert(row.key, v);
+        }
+        Ok(out)
+    }
+
+    /// Save dirty + delete-marked kv changes. Called by the runtime at
+    /// tick end with only the keys the program actually touched.
+    pub async fn save_kv(
+        &self,
+        vigy_id: &VigyId,
+        dirty: &std::collections::BTreeMap<String, serde_json::Value>,
+        deleted: &std::collections::BTreeSet<String>,
+    ) -> Result<()> {
+        let now = time::OffsetDateTime::now_utc()
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap_or_default();
+        for (k, v) in dirty {
+            let value_json = serde_json::to_string(v)?;
+            let am = vigy_kv::ActiveModel {
+                vigy_id: Set(vigy_id.to_string()),
+                key: Set(k.clone()),
+                value_json: Set(value_json),
+                updated_at: Set(now.clone()),
+            };
+            // SQLite UPSERT via sea-orm — first try update, fall back to insert.
+            let existing = VigyKvEntity::find_by_id((vigy_id.to_string(), k.clone()))
+                .one(&self.db)
+                .await?;
+            match existing {
+                Some(_) => {
+                    am.update(&self.db).await?;
+                }
+                None => {
+                    am.insert(&self.db).await?;
+                }
+            }
+        }
+        for k in deleted {
+            let _ = VigyKvEntity::delete_by_id((vigy_id.to_string(), k.clone()))
+                .exec(&self.db)
+                .await;
+        }
+        Ok(())
+    }
 }
 
 fn model_to_vigy(m: vigy::Model) -> Result<Vigy> {

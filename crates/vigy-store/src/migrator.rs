@@ -8,7 +8,70 @@ pub struct Migrator;
 #[async_trait::async_trait]
 impl MigratorTrait for Migrator {
     fn migrations() -> Vec<Box<dyn MigrationTrait>> {
-        vec![Box::new(m20260520_000001_init::Migration)]
+        vec![
+            Box::new(m20260520_000001_init::Migration),
+            Box::new(m20260521_000002_vigy_kv::Migration),
+        ]
+    }
+}
+
+mod m20260521_000002_vigy_kv {
+    use sea_orm_migration::prelude::*;
+
+    pub struct Migration;
+    impl MigrationName for Migration {
+        fn name(&self) -> &str {
+            "m20260521_000002_vigy_kv"
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MigrationTrait for Migration {
+        async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            manager
+                .create_table(
+                    Table::create()
+                        .table(VigyKv::Table)
+                        .if_not_exists()
+                        .col(ColumnDef::new(VigyKv::VigyId).string().not_null())
+                        .col(ColumnDef::new(VigyKv::Key).string().not_null())
+                        .col(ColumnDef::new(VigyKv::ValueJson).text().not_null())
+                        .col(ColumnDef::new(VigyKv::UpdatedAt).string().not_null())
+                        .primary_key(
+                            Index::create()
+                                .col(VigyKv::VigyId)
+                                .col(VigyKv::Key),
+                        )
+                        .to_owned(),
+                )
+                .await?;
+            manager
+                .create_index(
+                    Index::create()
+                        .name("idx_vigy_kv_vigy_id")
+                        .table(VigyKv::Table)
+                        .col(VigyKv::VigyId)
+                        .to_owned(),
+                )
+                .await?;
+            Ok(())
+        }
+
+        async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            manager
+                .drop_table(Table::drop().table(VigyKv::Table).to_owned())
+                .await?;
+            Ok(())
+        }
+    }
+
+    #[derive(Iden)]
+    enum VigyKv {
+        Table,
+        VigyId,
+        Key,
+        ValueJson,
+        UpdatedAt,
     }
 }
 

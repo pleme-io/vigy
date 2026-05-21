@@ -3863,6 +3863,7 @@ dependencies = [
  "tatara-lisp",
  "tatara-lisp-eval",
  "thiserror",
+ "time",
  "tracing",
  "vigy-types",
 ]

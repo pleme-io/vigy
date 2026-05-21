@@ -20,5 +20,5 @@ pub use error::{Error, Result};
 pub use id::{VigyId, VigyRunId};
 pub use label::Labels;
 pub use run::VigyRun;
-pub use state::VigyState;
+pub use state::{Condition, ConditionStatus, VigyState};
 pub use vigy::{TickInterval, Vigy};

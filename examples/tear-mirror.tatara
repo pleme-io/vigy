@@ -1,0 +1,102 @@
+;; tear-mirror.tatara — a realistic reconciler exercising the full
+;; vigy framework verb surface.
+;;
+;; Purpose: keep mado's embedded tear session list in sync with the
+;; system tear daemon's session list. Runs continuously inside mado;
+;; recovers from transient daemon outages via backoff; records its
+;; health as conditions so operators can query "is the sync ready?"
+;;
+;; Shape: each tick walks the kubernetes-controller discipline —
+;;   1. observe both sides (record what we saw via vigy-observed)
+;;   2. desire the union (declare what should be true via vigy-desired)
+;;   3. compare → decide → emit typed Create/Update/Delete actions
+;;   4. record health condition; mark converged when in sync
+;;
+;; Real payloads would carry session IDs / PTY metadata — for this
+;; example we use synthetic counts pulled from the persistent KV
+;; (which a real host-extension intrinsic would populate from the
+;; daemon RPC + the in-process tear-core registry on each tick).
+
+;; ── 0. Tick metadata + log line ─────────────────────────────────
+(vigy-log "info" "tear-mirror tick")
+(vigy-trace "tick_count" (vigy-tick-count))
+
+;; First-ever tick: log a one-shot marker and seed counters.
+(if (vigy-once "init")
+    (begin
+      (vigy-log "info" "tear-mirror initialised")
+      (vigy-set "consecutive_failures" 0)
+      (vigy-set "last_daemon_session_count" 0)
+      (vigy-set "last_embed_session_count" 0))
+    (vigy-log "debug" "tear-mirror running"))
+
+;; ── 1. Rate-limit the heavy work to once per 2s ────────────────
+;; This vigy is configured to tick every 500 ms but the actual
+;; sync work is expensive — only run it every 2s, defer otherwise.
+(if (vigy-rate-limited? "sync-work" 2000)
+    (begin
+      (vigy-defer "rate-limited by 2s window")
+      (vigy-condition "Active" "true" "RateLimited" "skipping; window closes soon"))
+    (begin
+
+      ;; ── 2. Observe (in a real reconciler these come from host
+      ;;     extensions like (mado-tear-embed-sessions) +
+      ;;     (mado-tear-daemon-sessions)). Here we read prior
+      ;;     observations from the persistent KV and simulate
+      ;;     small drift each tick.
+      (let ((daemon-count (vigy-get "last_daemon_session_count" 0))
+            (embed-count  (vigy-get "last_embed_session_count"  0)))
+
+        (vigy-observed "daemon_session_count" daemon-count)
+        (vigy-observed "embed_session_count"  embed-count)
+
+        ;; ── 3. Desire = the larger side (we want both at parity)
+        (let ((target (if (> daemon-count embed-count)
+                          daemon-count
+                          embed-count)))
+          (vigy-desired "session_count" target)
+          (vigy-metric "session_count_target" target)
+
+          ;; ── 4. Decide + emit a typed verb
+          (cond
+            ;; Drift: daemon ahead — pull missing sessions into mado.
+            ((> daemon-count embed-count)
+             (vigy-pull "sessions-from-daemon")
+             (vigy-incr "embed_session_count")
+             (vigy-event "PullSessions"
+                         "embed lagging behind daemon by 1; pulling"))
+
+            ;; Drift: embed ahead — push to daemon.
+            ((> embed-count daemon-count)
+             (vigy-push "sessions-to-daemon")
+             (vigy-incr "last_daemon_session_count")
+             (vigy-event "PushSessions"
+                         "daemon lagging behind embed by 1; pushing"))
+
+            ;; In sync — record convergence + healthy condition.
+            (else
+             (vigy-noop)
+             (vigy-mark-converged "in_sync")
+             (vigy-condition "Ready" "true" "InSync"
+                             "embed and daemon agree on session count")))
+
+          ;; Health condition — populated regardless of branch.
+          (let ((failures (vigy-get "consecutive_failures" 0)))
+            (if (> failures 3)
+                (vigy-condition "Healthy" "false" "BackoffActive"
+                                "3+ failed ticks; in backoff window")
+                (vigy-condition "Healthy" "true" nil nil)))
+
+          ;; ── 5. Convergence ledger
+          ;; vigy-converged? reads back whether we've ever achieved sync;
+          ;; surface it on the run for the audit trail.
+          (vigy-trace "ever_converged" (vigy-converged? "in_sync"))
+          (vigy-metric "consecutive_failures"
+                       (vigy-get "consecutive_failures" 0)))))))
+
+;; ── 6. Always-on heartbeat ──────────────────────────────────────
+;; Even on rate-limited / deferred ticks, emit a heartbeat noop so
+;; the run-bus has a record for `vigy tail` consumers.
+(if (= (vigy-tick-count) (* 10 (/ (vigy-tick-count) 10)))
+    (vigy-event "Heartbeat" "every 10 ticks")
+    nil)

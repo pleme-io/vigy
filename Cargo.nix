@@ -13259,6 +13259,11 @@ rec {
             packageId = "thiserror";
           }
           {
+            name = "time";
+            packageId = "time";
+            features = [ "serde" "macros" "formatting" "parsing" ];
+          }
+          {
             name = "tracing";
             packageId = "tracing";
           }
