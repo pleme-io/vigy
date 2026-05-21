@@ -1,0 +1,113 @@
+// vigy gRPC service — low-latency hot-path control surface.
+//
+// Used by:
+//   - mado embedding the runtime in-process (Tonic over Unix socket)
+//   - tear-daemon for cross-mado coordination
+//   - external operators for fine-grained control
+
+syntax = "proto3";
+
+package pleme.vigy.v1;
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/duration.proto";
+import "google/protobuf/struct.proto";
+
+// One reconciler.
+message Vigy {
+  string id = 1;                              // BLAKE3-derived stable id
+  string name = 2;                            // operator-visible
+  string program = 3;                         // raw tatara-lisp source
+  google.protobuf.Duration tick_interval = 4; // how often to run
+  bool enabled = 5;
+  google.protobuf.Timestamp created_at = 6;
+  google.protobuf.Timestamp updated_at = 7;
+  map<string, string> labels = 8;             // operator-attached metadata
+}
+
+// Snapshot of what a vigy currently "sees" + intends.
+message VigyState {
+  string vigy_id = 1;
+  google.protobuf.Struct desired = 2;         // arbitrary JSON
+  google.protobuf.Struct observed = 3;
+  repeated ReconcileAction pending = 4;
+  google.protobuf.Timestamp captured_at = 5;
+}
+
+// One action the vigy decided to take on its last tick.
+message ReconcileAction {
+  string kind = 1;                            // "pull" | "push" | "noop" | custom
+  google.protobuf.Struct payload = 2;
+  ResultStatus result = 3;
+  string message = 4;
+}
+
+enum ResultStatus {
+  RESULT_STATUS_UNSPECIFIED = 0;
+  RESULT_STATUS_OK = 1;
+  RESULT_STATUS_FAILED = 2;
+  RESULT_STATUS_SKIPPED = 3;
+}
+
+// Recorded run.
+message VigyRun {
+  string id = 1;
+  string vigy_id = 2;
+  google.protobuf.Timestamp started_at = 3;
+  google.protobuf.Timestamp ended_at = 4;
+  ResultStatus result = 5;
+  string error = 6;
+  repeated ReconcileAction actions = 7;
+}
+
+// ===== service =====
+
+service VigyService {
+  rpc Register(RegisterRequest) returns (Vigy);
+  rpc Update(UpdateRequest) returns (Vigy);
+  rpc Disable(DisableRequest) returns (Vigy);
+  rpc Enable(EnableRequest) returns (Vigy);
+  rpc Delete(DeleteRequest) returns (DeleteResponse);
+
+  rpc Get(GetRequest) returns (Vigy);
+  rpc List(ListRequest) returns (ListResponse);
+
+  rpc GetState(GetStateRequest) returns (VigyState);
+  rpc Tick(TickRequest) returns (VigyRun);             // force-tick a vigy now
+
+  rpc StreamEvents(StreamEventsRequest) returns (stream VigyRun);  // tail
+}
+
+message RegisterRequest {
+  string name = 1;
+  string program = 2;
+  google.protobuf.Duration tick_interval = 3;
+  bool enabled = 4;
+  map<string, string> labels = 5;
+}
+message UpdateRequest {
+  string id = 1;
+  optional string program = 2;
+  optional google.protobuf.Duration tick_interval = 3;
+  map<string, string> labels = 4;
+}
+message DisableRequest { string id = 1; }
+message EnableRequest { string id = 1; }
+message DeleteRequest { string id = 1; }
+message DeleteResponse { bool deleted = 1; }
+
+message GetRequest { string id = 1; }
+message ListRequest {
+  optional string label_selector = 1;          // e.g. "host=mado,scope=tear-sync"
+  optional uint32 limit = 2;
+}
+message ListResponse {
+  repeated Vigy vigies = 1;
+}
+
+message GetStateRequest { string id = 1; }
+message TickRequest { string id = 1; }
+
+message StreamEventsRequest {
+  optional string vigy_id = 1;                 // empty = all
+}

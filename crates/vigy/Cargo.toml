@@ -1,0 +1,25 @@
+[package]
+name = "vigy"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "vigy facade — re-exports every vigy-* crate so consumers (mado, tear-daemon, etc.) `cargo add vigy` once."
+
+[features]
+default = ["rest", "graphql", "rpc", "mcp"]
+rest = ["dep:vigy-rest"]
+graphql = ["dep:vigy-graphql"]
+rpc = ["dep:vigy-rpc"]
+mcp = ["dep:vigy-mcp"]
+
+[dependencies]
+vigy-types = { path = "../vigy-types" }
+vigy-store = { path = "../vigy-store" }
+vigy-eval = { path = "../vigy-eval" }
+vigy-runtime = { path = "../vigy-runtime" }
+vigy-rest = { path = "../vigy-rest", optional = true }
+vigy-graphql = { path = "../vigy-graphql", optional = true }
+vigy-rpc = { path = "../vigy-rpc", optional = true }
+vigy-mcp = { path = "../vigy-mcp", optional = true }

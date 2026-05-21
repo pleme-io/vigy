@@ -1,0 +1,251 @@
+openapi: 3.1.0
+info:
+  title: vigy REST API
+  description: |
+    Human-facing control surface for the vigy reconciler runtime.
+
+    Authoritative source for the REST shape — `vigy-rest` handlers
+    are derived from this document via `utoipa::ToSchema`. The gRPC
+    surface (`spec/vigy.proto`) and the GraphQL surface (`spec/vigy.graphql`)
+    are the alternate views; semantics are identical, transport
+    is the choice of consumer.
+  version: 0.1.0
+  license:
+    name: MIT
+servers:
+  - url: http://localhost:38821
+    description: default local bind
+paths:
+  /v1/vigies:
+    get:
+      summary: List vigies
+      operationId: listVigies
+      parameters:
+        - in: query
+          name: label_selector
+          schema:
+            type: string
+          description: kubernetes-style label selector
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Vigy' }
+    post:
+      summary: Register a new vigy
+      operationId: registerVigy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RegisterVigy' }
+      responses:
+        '201':
+          description: created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Vigy' }
+  /v1/vigies/{id}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+    get:
+      summary: Get a vigy by id
+      operationId: getVigy
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Vigy' }
+    patch:
+      summary: Update vigy fields
+      operationId: updateVigy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateVigy' }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Vigy' }
+    delete:
+      summary: Delete a vigy
+      operationId: deleteVigy
+      responses:
+        '204':
+          description: deleted
+  /v1/vigies/{id}/state:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+    get:
+      summary: Current snapshot of a vigy's state
+      operationId: getVigyState
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VigyState' }
+  /v1/vigies/{id}/tick:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+    post:
+      summary: Force-tick a vigy now
+      operationId: tickVigy
+      responses:
+        '200':
+          description: tick result
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VigyRun' }
+  /v1/vigies/{id}/disable:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+    post:
+      summary: Disable a vigy (it stops ticking)
+      operationId: disableVigy
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Vigy' }
+  /v1/vigies/{id}/enable:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+    post:
+      summary: Enable a previously-disabled vigy
+      operationId: enableVigy
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Vigy' }
+  /v1/events:
+    get:
+      summary: Server-sent stream of reconcile events
+      operationId: streamEvents
+      parameters:
+        - in: query
+          name: vigy_id
+          schema:
+            type: string
+          description: filter to one vigy
+      responses:
+        '200':
+          description: text/event-stream of VigyRun records
+          content:
+            text/event-stream:
+              schema: { $ref: '#/components/schemas/VigyRun' }
+components:
+  schemas:
+    Vigy:
+      type: object
+      required: [id, name, program, tick_interval_ms, enabled, created_at, updated_at]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        program:
+          type: string
+          description: tatara-lisp source
+        tick_interval_ms:
+          type: integer
+          minimum: 100
+        enabled: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        labels:
+          type: object
+          additionalProperties: { type: string }
+    RegisterVigy:
+      type: object
+      required: [name, program]
+      properties:
+        name: { type: string }
+        program: { type: string }
+        tick_interval_ms:
+          type: integer
+          default: 1000
+          minimum: 100
+        enabled:
+          type: boolean
+          default: true
+        labels:
+          type: object
+          additionalProperties: { type: string }
+    UpdateVigy:
+      type: object
+      properties:
+        program: { type: string }
+        tick_interval_ms: { type: integer, minimum: 100 }
+        labels:
+          type: object
+          additionalProperties: { type: string }
+    VigyState:
+      type: object
+      required: [vigy_id, captured_at]
+      properties:
+        vigy_id: { type: string }
+        desired: {}
+        observed: {}
+        pending:
+          type: array
+          items: { $ref: '#/components/schemas/ReconcileAction' }
+        captured_at: { type: string, format: date-time }
+    ReconcileAction:
+      type: object
+      required: [kind]
+      properties:
+        kind:
+          type: string
+          enum: [pull, push, noop, custom]
+        payload: {}
+        result:
+          type: string
+          enum: [ok, failed, skipped]
+        message: { type: string }
+    VigyRun:
+      type: object
+      required: [id, vigy_id, started_at, result]
+      properties:
+        id: { type: string }
+        vigy_id: { type: string }
+        started_at: { type: string, format: date-time }
+        ended_at: { type: string, format: date-time }
+        result: { type: string, enum: [ok, failed, skipped] }
+        error: { type: string }
+        actions:
+          type: array
+          items: { $ref: '#/components/schemas/ReconcileAction' }

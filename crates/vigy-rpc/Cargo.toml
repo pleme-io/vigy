@@ -1,0 +1,24 @@
+[package]
+name = "vigy-rpc"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "gRPC surface for vigy (tonic). Service definition in spec/vigy.proto; build.rs wires tonic-build. Public Service impl backed by RuntimeHandle."
+
+[dependencies]
+vigy-types = { path = "../vigy-types" }
+vigy-runtime = { path = "../vigy-runtime" }
+anyhow = { workspace = true }
+tokio = { workspace = true }
+tokio-stream = { workspace = true }
+tracing = { workspace = true }
+tonic = { workspace = true }
+prost = { workspace = true }
+prost-types = { workspace = true }
+serde_json = { workspace = true }
+
+[build-dependencies]
+tonic-build = { workspace = true }
+protobuf-src = "2"

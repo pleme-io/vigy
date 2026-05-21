@@ -1,0 +1,83 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/vigy-types",
+    "crates/vigy-store",
+    "crates/vigy-eval",
+    "crates/vigy-runtime",
+    "crates/vigy-rpc",
+    "crates/vigy-graphql",
+    "crates/vigy-rest",
+    "crates/vigy-mcp",
+    "crates/vigy-cli",
+    "crates/vigy",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+authors = ["Pleme Team <team@pleme.io>"]
+repository = "https://github.com/pleme-io/vigy"
+homepage = "https://github.com/pleme-io/vigy"
+keywords = ["reconciler", "tatara-lisp", "mado", "tear", "kubernetes-style"]
+categories = ["development-tools", "command-line-utilities"]
+
+[workspace.dependencies]
+# core
+anyhow = "1.0"
+thiserror = "2.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+toml = "0.8"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+blake3 = "1.5"
+time = { version = "0.3", features = ["serde", "macros", "formatting", "parsing"] }
+url = { version = "2", features = ["serde"] }
+uuid = { version = "1", features = ["v7", "serde"] }
+async-trait = "0.1"
+
+# async runtime
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "fs", "signal", "io-util", "net"] }
+tokio-stream = "0.1"
+futures = "0.3"
+
+# persistence (SeaORM + SQLite)
+sea-orm = { version = "1", features = ["sqlx-sqlite", "runtime-tokio-rustls", "macros", "with-time", "with-uuid"] }
+sea-orm-migration = { version = "1", features = ["sqlx-sqlite", "runtime-tokio-rustls"] }
+
+# tri-modal APIs
+# gRPC
+tonic = { version = "0.12", features = ["transport"] }
+tonic-build = "0.12"
+prost = "0.13"
+prost-types = "0.13"
+# GraphQL
+async-graphql = { version = "7", features = ["chrono", "uuid"] }
+async-graphql-axum = "7"
+# REST + OpenAPI (handlers derived from spec via utoipa)
+axum = "0.7"
+utoipa = { version = "5", features = ["axum_extras", "uuid", "time"] }
+utoipa-swagger-ui = { version = "8", features = ["axum"] }
+utoipa-axum = "0.1"
+tower = "0.5"
+tower-http = { version = "0.6", features = ["trace", "cors"] }
+
+# CLI
+clap = { version = "4.5", features = ["derive"] }
+colored = "2.1"
+
+# Tatara-lisp embedded evaluator
+tatara-lisp = { git = "https://github.com/pleme-io/tatara-lisp" }
+tatara-lisp-eval = { git = "https://github.com/pleme-io/tatara-lisp" }
+
+# Pleme-io substrate primitives
+shikumi = { version = "0.1" }
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "z"
+strip = true

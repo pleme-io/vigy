@@ -1,0 +1,8 @@
+;; hello-vigy.tatara — the smallest vigy that does something visible.
+;;
+;; On every tick:
+;;   1. Logs an info message with the tick's epoch ms.
+;;   2. Emits a no-op reconcile action so the runtime records the tick.
+
+(vigy-log "info" "hello from a vigy")
+(vigy-noop)

@@ -1,0 +1,22 @@
+[package]
+name = "vigy-graphql"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "GraphQL surface for vigy — async-graphql + axum. Same semantics as REST/gRPC, but introspection-friendly for dashboards."
+
+[dependencies]
+vigy-types = { path = "../vigy-types" }
+vigy-runtime = { path = "../vigy-runtime" }
+anyhow = { workspace = true }
+tokio = { workspace = true }
+tokio-stream = { workspace = true }
+tracing = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+async-graphql = { workspace = true }
+async-graphql-axum = { workspace = true }
+axum = { workspace = true }
+time = { workspace = true }

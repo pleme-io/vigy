@@ -1,0 +1,22 @@
+[package]
+name = "vigy-store"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "SeaORM/SQLite persistence for the vigy reconciler runtime — vigies, runs, events. Operator-debuggable single-file DB."
+
+[dependencies]
+vigy-types = { path = "../vigy-types" }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+time = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+sea-orm = { workspace = true }
+sea-orm-migration = { workspace = true }
+async-trait = { workspace = true }
+uuid = { workspace = true }

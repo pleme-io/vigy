@@ -1,0 +1,26 @@
+[package]
+name = "vigy-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "vigy-cli — human-facing CLI: register / list / inspect / tail / tick / serve. Reads .tatara files; writes plan-friendly output."
+
+[[bin]]
+name = "vigy"
+path = "src/main.rs"
+
+[dependencies]
+vigy-types = { path = "../vigy-types" }
+vigy-store = { path = "../vigy-store" }
+vigy-runtime = { path = "../vigy-runtime" }
+anyhow = { workspace = true }
+clap = { workspace = true }
+colored = { workspace = true }
+tokio = { workspace = true }
+tokio-stream = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+serde_json = { workspace = true }
+time = { workspace = true }

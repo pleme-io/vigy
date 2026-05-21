@@ -1,0 +1,105 @@
+"""
+vigy GraphQL schema — introspection + control plane for dashboards
+and other read-heavy consumers.
+
+Same semantic surface as `vigy.proto` and `vigy.openapi.yaml`. Pick the
+transport matching the consumer.
+"""
+
+scalar DateTime
+scalar JSON
+
+type Vigy {
+  id: ID!
+  name: String!
+  program: String!
+  tickIntervalMs: Int!
+  enabled: Boolean!
+  createdAt: DateTime!
+  updatedAt: DateTime!
+  labels: JSON!
+
+  "Most recent state snapshot — null if vigy has never ticked."
+  state: VigyState
+
+  "Recorded runs, newest first."
+  runs(limit: Int = 20): [VigyRun!]!
+}
+
+type VigyState {
+  vigyId: ID!
+  desired: JSON
+  observed: JSON
+  pending: [ReconcileAction!]!
+  capturedAt: DateTime!
+}
+
+type ReconcileAction {
+  kind: ReconcileKind!
+  payload: JSON
+  result: ResultStatus
+  message: String
+}
+
+enum ReconcileKind {
+  PULL
+  PUSH
+  NOOP
+  CUSTOM
+}
+
+enum ResultStatus {
+  OK
+  FAILED
+  SKIPPED
+}
+
+type VigyRun {
+  id: ID!
+  vigyId: ID!
+  startedAt: DateTime!
+  endedAt: DateTime
+  result: ResultStatus!
+  error: String
+  actions: [ReconcileAction!]!
+}
+
+# ===== queries =====
+
+type Query {
+  vigy(id: ID!): Vigy
+  vigies(labelSelector: String, limit: Int): [Vigy!]!
+  recentRuns(vigyId: ID, limit: Int = 50): [VigyRun!]!
+}
+
+# ===== mutations =====
+
+input RegisterVigyInput {
+  name: String!
+  program: String!
+  tickIntervalMs: Int = 1000
+  enabled: Boolean = true
+  labels: JSON
+}
+
+input UpdateVigyInput {
+  program: String
+  tickIntervalMs: Int
+  labels: JSON
+}
+
+type Mutation {
+  registerVigy(input: RegisterVigyInput!): Vigy!
+  updateVigy(id: ID!, input: UpdateVigyInput!): Vigy!
+  disableVigy(id: ID!): Vigy!
+  enableVigy(id: ID!): Vigy!
+  deleteVigy(id: ID!): Boolean!
+  tickVigy(id: ID!): VigyRun!
+}
+
+# ===== subscriptions =====
+
+type Subscription {
+  "Stream of reconcile events for one or all vigies."
+  reconcileEvents(vigyId: ID): VigyRun!
+}

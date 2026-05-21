@@ -1,0 +1,21 @@
+[package]
+name = "vigy-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Tokio-driven tick scheduler + registry for vigies. One task per registered vigy; per-vigy hot-swap on update; persistence delegated to vigy-store."
+
+[dependencies]
+vigy-types = { path = "../vigy-types" }
+vigy-store = { path = "../vigy-store" }
+vigy-eval = { path = "../vigy-eval" }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tokio-stream = { workspace = true }
+tracing = { workspace = true }
+time = { workspace = true }
+serde_json = { workspace = true }
+async-trait = { workspace = true }
