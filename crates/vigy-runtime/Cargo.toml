@@ -8,9 +8,9 @@ repository.workspace = true
 description = "Tokio-driven tick scheduler + registry for vigies. One task per registered vigy; per-vigy hot-swap on update; persistence delegated to vigy-store."
 
 [dependencies]
-vigy-types = { path = "../vigy-types" }
-vigy-store = { path = "../vigy-store" }
-vigy-eval = { path = "../vigy-eval" }
+vigy-types = { version = "0.1.1", path = "../vigy-types" }
+vigy-store = { version = "0.1.1", path = "../vigy-store" }
+vigy-eval = { version = "0.1.1", path = "../vigy-eval" }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }

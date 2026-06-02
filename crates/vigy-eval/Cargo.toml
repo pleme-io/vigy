@@ -8,7 +8,7 @@ repository.workspace = true
 description = "Tatara-lisp host bindings + stdlib for vigy — defines VigyHost and the vigy-emit/vigy-log/vigy-noop intrinsics vigies use to talk back to the runtime."
 
 [dependencies]
-vigy-types = { path = "../vigy-types" }
+vigy-types = { version = "0.1.1", path = "../vigy-types" }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }

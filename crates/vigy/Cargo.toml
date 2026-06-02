@@ -15,11 +15,11 @@ rpc = ["dep:vigy-rpc"]
 mcp = ["dep:vigy-mcp"]
 
 [dependencies]
-vigy-types = { path = "../vigy-types" }
-vigy-store = { path = "../vigy-store" }
-vigy-eval = { path = "../vigy-eval" }
-vigy-runtime = { path = "../vigy-runtime" }
-vigy-rest = { path = "../vigy-rest", optional = true }
-vigy-graphql = { path = "../vigy-graphql", optional = true }
-vigy-rpc = { path = "../vigy-rpc", optional = true }
-vigy-mcp = { path = "../vigy-mcp", optional = true }
+vigy-types = { version = "0.1.1", path = "../vigy-types" }
+vigy-store = { version = "0.1.1", path = "../vigy-store" }
+vigy-eval = { version = "0.1.1", path = "../vigy-eval" }
+vigy-runtime = { version = "0.1.1", path = "../vigy-runtime" }
+vigy-rest = { version = "0.1.1", path = "../vigy-rest", optional = true }
+vigy-graphql = { version = "0.1.1", path = "../vigy-graphql", optional = true }
+vigy-rpc = { version = "0.1.1", path = "../vigy-rpc", optional = true }
+vigy-mcp = { version = "0.1.1", path = "../vigy-mcp", optional = true }

@@ -8,8 +8,8 @@ repository.workspace = true
 description = "MCP server for vigy — exposes runtime CRUD as MCP tools so Claude (and other MCP clients) can drive the registry."
 
 [dependencies]
-vigy-types = { path = "../vigy-types" }
-vigy-runtime = { path = "../vigy-runtime" }
+vigy-types = { version = "0.1.1", path = "../vigy-types" }
+vigy-runtime = { version = "0.1.1", path = "../vigy-runtime" }
 anyhow = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
