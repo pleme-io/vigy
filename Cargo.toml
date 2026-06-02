@@ -68,9 +68,13 @@ tower-http = { version = "0.6", features = ["trace", "cors"] }
 clap = { version = "4.5", features = ["derive"] }
 colored = "2.1"
 
-# Tatara-lisp embedded evaluator
-tatara-lisp = { git = "https://github.com/pleme-io/tatara-lisp" }
-tatara-lisp-eval = { git = "https://github.com/pleme-io/tatara-lisp" }
+# Tatara-lisp embedded evaluator.
+# version+git: `cargo publish` strips the git source and ships the crates.io
+# version dep (tatara-lisp is published at 0.2.x); local + downstream-git
+# builds resolve to tatara-lisp HEAD. Keeps vigy on absolute-latest locally
+# while remaining crates.io-publishable via the auto-release pipeline.
+tatara-lisp = { version = "0.2", git = "https://github.com/pleme-io/tatara-lisp" }
+tatara-lisp-eval = { version = "0.2", git = "https://github.com/pleme-io/tatara-lisp" }
 
 # Pleme-io substrate primitives
 shikumi = { version = "0.1" }
