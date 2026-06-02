@@ -8,7 +8,7 @@ repository.workspace = true
 description = "SeaORM/SQLite persistence for the vigy reconciler runtime — vigies, runs, events. Operator-debuggable single-file DB."
 
 [dependencies]
-vigy-types = { path = "../vigy-types" }
+vigy-types = { version = "0.1.1", path = "../vigy-types" }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }

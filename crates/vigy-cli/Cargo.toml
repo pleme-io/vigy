@@ -12,10 +12,10 @@ name = "vigy"
 path = "src/main.rs"
 
 [dependencies]
-vigy-types = { path = "../vigy-types" }
-vigy-store = { path = "../vigy-store" }
-vigy-runtime = { path = "../vigy-runtime" }
-vigy-rest = { path = "../vigy-rest" }
+vigy-types = { version = "0.1.1", path = "../vigy-types" }
+vigy-store = { version = "0.1.1", path = "../vigy-store" }
+vigy-runtime = { version = "0.1.1", path = "../vigy-runtime" }
+vigy-rest = { version = "0.1.1", path = "../vigy-rest" }
 anyhow = { workspace = true }
 clap = { workspace = true }
 colored = { workspace = true }

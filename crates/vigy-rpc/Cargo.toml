@@ -8,8 +8,8 @@ repository.workspace = true
 description = "gRPC surface for vigy (tonic). Service definition in spec/vigy.proto; build.rs wires tonic-build. Public Service impl backed by RuntimeHandle."
 
 [dependencies]
-vigy-types = { path = "../vigy-types" }
-vigy-runtime = { path = "../vigy-runtime" }
+vigy-types = { version = "0.1.1", path = "../vigy-types" }
+vigy-runtime = { version = "0.1.1", path = "../vigy-runtime" }
 anyhow = { workspace = true }
 tokio = { workspace = true }
 tokio-stream = { workspace = true }

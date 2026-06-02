@@ -8,8 +8,8 @@ repository.workspace = true
 description = "Axum REST surface for vigy — handlers derived from spec/vigy.openapi.yaml via utoipa. Includes Swagger UI."
 
 [dependencies]
-vigy-types = { path = "../vigy-types" }
-vigy-runtime = { path = "../vigy-runtime" }
+vigy-types = { version = "0.1.1", path = "../vigy-types" }
+vigy-runtime = { version = "0.1.1", path = "../vigy-runtime" }
 anyhow = { workspace = true }
 tokio = { workspace = true }
 tokio-stream = { workspace = true }
