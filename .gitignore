@@ -6,4 +6,3 @@
 *.db
 *.db-shm
 *.db-wal
-Cargo.build-spec.json
