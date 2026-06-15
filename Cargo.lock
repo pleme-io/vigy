@@ -3822,7 +3822,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "vigy"
-version = "0.1.2"
+version = "0.1.4"
 dependencies = [
  "vigy-eval",
  "vigy-graphql",
@@ -3836,7 +3836,7 @@ dependencies = [
 
 [[package]]
 name = "vigy-cli"
-version = "0.1.2"
+version = "0.1.4"
 dependencies = [
  "anyhow",
  "clap",
@@ -3855,7 +3855,7 @@ dependencies = [
 
 [[package]]
 name = "vigy-eval"
-version = "0.1.2"
+version = "0.1.4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3872,7 +3872,7 @@ dependencies = [
 
 [[package]]
 name = "vigy-graphql"
-version = "0.1.2"
+version = "0.1.4"
 dependencies = [
  "anyhow",
  "async-graphql",
@@ -3890,7 +3890,7 @@ dependencies = [
 
 [[package]]
 name = "vigy-mcp"
-version = "0.1.2"
+version = "0.1.4"
 dependencies = [
  "anyhow",
  "serde",
@@ -3903,7 +3903,7 @@ dependencies = [
 
 [[package]]
 name = "vigy-rest"
-version = "0.1.2"
+version = "0.1.4"
 dependencies = [
  "anyhow",
  "axum 0.7.9",
@@ -3923,7 +3923,7 @@ dependencies = [
 
 [[package]]
 name = "vigy-rpc"
-version = "0.1.2"
+version = "0.1.4"
 dependencies = [
  "anyhow",
  "prost",
@@ -3941,7 +3941,7 @@ dependencies = [
 
 [[package]]
 name = "vigy-runtime"
-version = "0.1.2"
+version = "0.1.4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3958,7 +3958,7 @@ dependencies = [
 
 [[package]]
 name = "vigy-store"
-version = "0.1.2"
+version = "0.1.4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3977,7 +3977,7 @@ dependencies = [
 
 [[package]]
 name = "vigy-types"
-version = "0.1.2"
+version = "0.1.4"
 dependencies = [
  "async-graphql",
  "blake3",

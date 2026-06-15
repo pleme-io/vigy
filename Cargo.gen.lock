@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "cargo_lock_sha256": "43f04c5264df17a69f2a41a6175d08854852224bb6ee0569ccff927ad8ad6193",
+  "cargo_lock_sha256": "0042a6a48d0846536e05a6afd623959eb2221fdce420ea18d9d4e84800ab3bcd",
   "target_resolves": {
     "base": {
       "Inflector-0.11.4": {
@@ -14206,11 +14206,11 @@
         "build_dependencies": [],
         "features": []
       },
-      "vigy-0.1.2": {
+      "vigy-0.1.4": {
         "runtime_dependencies": [
           {
             "name": "vigy_eval",
-            "package_key": "vigy-eval-0.1.2",
+            "package_key": "vigy-eval-0.1.4",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -14220,7 +14220,7 @@
           },
           {
             "name": "vigy_graphql",
-            "package_key": "vigy-graphql-0.1.2",
+            "package_key": "vigy-graphql-0.1.4",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -14230,7 +14230,7 @@
           },
           {
             "name": "vigy_mcp",
-            "package_key": "vigy-mcp-0.1.2",
+            "package_key": "vigy-mcp-0.1.4",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -14240,7 +14240,7 @@
           },
           {
             "name": "vigy_rest",
-            "package_key": "vigy-rest-0.1.2",
+            "package_key": "vigy-rest-0.1.4",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -14250,7 +14250,7 @@
           },
           {
             "name": "vigy_rpc",
-            "package_key": "vigy-rpc-0.1.2",
+            "package_key": "vigy-rpc-0.1.4",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -14260,7 +14260,7 @@
           },
           {
             "name": "vigy_runtime",
-            "package_key": "vigy-runtime-0.1.2",
+            "package_key": "vigy-runtime-0.1.4",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -14270,7 +14270,7 @@
           },
           {
             "name": "vigy_store",
-            "package_key": "vigy-store-0.1.2",
+            "package_key": "vigy-store-0.1.4",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -14280,7 +14280,7 @@
           },
           {
             "name": "vigy_types",
-            "package_key": "vigy-types-0.1.2",
+            "package_key": "vigy-types-0.1.4",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -14298,7 +14298,7 @@
           "rpc"
         ]
       },
-      "vigy-cli-0.1.2": {
+      "vigy-cli-0.1.4": {
         "runtime_dependencies": [
           {
             "name": "anyhow",
@@ -14408,7 +14408,7 @@
           },
           {
             "name": "vigy_rest",
-            "package_key": "vigy-rest-0.1.2",
+            "package_key": "vigy-rest-0.1.4",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -14418,7 +14418,7 @@
           },
           {
             "name": "vigy_runtime",
-            "package_key": "vigy-runtime-0.1.2",
+            "package_key": "vigy-runtime-0.1.4",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -14428,7 +14428,7 @@
           },
           {
             "name": "vigy_store",
-            "package_key": "vigy-store-0.1.2",
+            "package_key": "vigy-store-0.1.4",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -14438,7 +14438,7 @@
           },
           {
             "name": "vigy_types",
-            "package_key": "vigy-types-0.1.2",
+            "package_key": "vigy-types-0.1.4",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -14450,7 +14450,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "vigy-eval-0.1.2": {
+      "vigy-eval-0.1.4": {
         "runtime_dependencies": [
           {
             "name": "anyhow",
@@ -14570,7 +14570,7 @@
           },
           {
             "name": "vigy_types",
-            "package_key": "vigy-types-0.1.2",
+            "package_key": "vigy-types-0.1.4",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -14582,7 +14582,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "vigy-graphql-0.1.2": {
+      "vigy-graphql-0.1.4": {
         "runtime_dependencies": [
           {
             "name": "anyhow",
@@ -14702,7 +14702,7 @@
           },
           {
             "name": "vigy_runtime",
-            "package_key": "vigy-runtime-0.1.2",
+            "package_key": "vigy-runtime-0.1.4",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -14712,7 +14712,7 @@
           },
           {
             "name": "vigy_types",
-            "package_key": "vigy-types-0.1.2",
+            "package_key": "vigy-types-0.1.4",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -14724,7 +14724,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "vigy-mcp-0.1.2": {
+      "vigy-mcp-0.1.4": {
         "runtime_dependencies": [
           {
             "name": "anyhow",
@@ -14789,7 +14789,7 @@
           },
           {
             "name": "vigy_runtime",
-            "package_key": "vigy-runtime-0.1.2",
+            "package_key": "vigy-runtime-0.1.4",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -14799,7 +14799,7 @@
           },
           {
             "name": "vigy_types",
-            "package_key": "vigy-types-0.1.2",
+            "package_key": "vigy-types-0.1.4",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -14811,7 +14811,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "vigy-rest-0.1.2": {
+      "vigy-rest-0.1.4": {
         "runtime_dependencies": [
           {
             "name": "anyhow",
@@ -14955,7 +14955,7 @@
           },
           {
             "name": "vigy_runtime",
-            "package_key": "vigy-runtime-0.1.2",
+            "package_key": "vigy-runtime-0.1.4",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -14965,7 +14965,7 @@
           },
           {
             "name": "vigy_types",
-            "package_key": "vigy-types-0.1.2",
+            "package_key": "vigy-types-0.1.4",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -14977,7 +14977,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "vigy-rpc-0.1.2": {
+      "vigy-rpc-0.1.4": {
         "runtime_dependencies": [
           {
             "name": "anyhow",
@@ -15072,7 +15072,7 @@
           },
           {
             "name": "vigy_runtime",
-            "package_key": "vigy-runtime-0.1.2",
+            "package_key": "vigy-runtime-0.1.4",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -15082,7 +15082,7 @@
           },
           {
             "name": "vigy_types",
-            "package_key": "vigy-types-0.1.2",
+            "package_key": "vigy-types-0.1.4",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -15115,7 +15115,7 @@
         ],
         "features": []
       },
-      "vigy-runtime-0.1.2": {
+      "vigy-runtime-0.1.4": {
         "runtime_dependencies": [
           {
             "name": "anyhow",
@@ -15213,7 +15213,7 @@
           },
           {
             "name": "vigy_eval",
-            "package_key": "vigy-eval-0.1.2",
+            "package_key": "vigy-eval-0.1.4",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -15223,7 +15223,7 @@
           },
           {
             "name": "vigy_store",
-            "package_key": "vigy-store-0.1.2",
+            "package_key": "vigy-store-0.1.4",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -15233,7 +15233,7 @@
           },
           {
             "name": "vigy_types",
-            "package_key": "vigy-types-0.1.2",
+            "package_key": "vigy-types-0.1.4",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -15245,7 +15245,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "vigy-store-0.1.2": {
+      "vigy-store-0.1.4": {
         "runtime_dependencies": [
           {
             "name": "anyhow",
@@ -15388,7 +15388,7 @@
           },
           {
             "name": "vigy_types",
-            "package_key": "vigy-types-0.1.2",
+            "package_key": "vigy-types-0.1.4",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -15400,7 +15400,7 @@
         "build_dependencies": [],
         "features": []
       },
-      "vigy-types-0.1.2": {
+      "vigy-types-0.1.4": {
         "runtime_dependencies": [
           {
             "name": "blake3",
@@ -17726,11 +17726,11 @@
     "constant_time_eq-0.4.2": {
       "edition": "2024"
     },
-    "core-foundation-sys-0.8.7": {
-      "edition": "2018"
-    },
     "cpufeatures-0.2.17": {
       "edition": "2018"
+    },
+    "cpufeatures-0.3.0": {
+      "edition": "2024"
     },
     "crc-3.4.0": {
       "edition": "2021"
@@ -18039,6 +18039,9 @@
       "edition": "2021",
       "build_script": "build.rs",
       "links": "sqlite3"
+    },
+    "linux-raw-sys-0.12.1": {
+      "edition": "2021"
     },
     "litemap-0.8.2": {
       "edition": "2021"
@@ -18684,14 +18687,14 @@
     "version_check-0.9.5": {
       "edition": "2015"
     },
-    "vigy-0.1.2": {
+    "vigy-0.1.4": {
       "edition": "2021",
       "lib_target": {
         "name": "vigy",
         "path": "src/lib.rs"
       }
     },
-    "vigy-cli-0.1.2": {
+    "vigy-cli-0.1.4": {
       "edition": "2021",
       "binaries": [
         {
@@ -18700,35 +18703,35 @@
         }
       ]
     },
-    "vigy-eval-0.1.2": {
+    "vigy-eval-0.1.4": {
       "edition": "2021",
       "lib_target": {
         "name": "vigy_eval",
         "path": "src/lib.rs"
       }
     },
-    "vigy-graphql-0.1.2": {
+    "vigy-graphql-0.1.4": {
       "edition": "2021",
       "lib_target": {
         "name": "vigy_graphql",
         "path": "src/lib.rs"
       }
     },
-    "vigy-mcp-0.1.2": {
+    "vigy-mcp-0.1.4": {
       "edition": "2021",
       "lib_target": {
         "name": "vigy_mcp",
         "path": "src/lib.rs"
       }
     },
-    "vigy-rest-0.1.2": {
+    "vigy-rest-0.1.4": {
       "edition": "2021",
       "lib_target": {
         "name": "vigy_rest",
         "path": "src/lib.rs"
       }
     },
-    "vigy-rpc-0.1.2": {
+    "vigy-rpc-0.1.4": {
       "edition": "2021",
       "build_script": "build.rs",
       "lib_target": {
@@ -18736,21 +18739,21 @@
         "path": "src/lib.rs"
       }
     },
-    "vigy-runtime-0.1.2": {
+    "vigy-runtime-0.1.4": {
       "edition": "2021",
       "lib_target": {
         "name": "vigy_runtime",
         "path": "src/lib.rs"
       }
     },
-    "vigy-store-0.1.2": {
+    "vigy-store-0.1.4": {
       "edition": "2021",
       "lib_target": {
         "name": "vigy_store",
         "path": "src/lib.rs"
       }
     },
-    "vigy-types-0.1.2": {
+    "vigy-types-0.1.4": {
       "edition": "2021",
       "lib_target": {
         "name": "vigy_types",
@@ -18816,11 +18819,8 @@
       "edition": "2021",
       "build_script": "build.rs"
     },
-    "cpufeatures-0.3.0": {
-      "edition": "2024"
-    },
-    "linux-raw-sys-0.12.1": {
-      "edition": "2021"
+    "core-foundation-sys-0.8.7": {
+      "edition": "2018"
     }
   },
   "git_nar_sha256": {
