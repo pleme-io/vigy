@@ -1061,11 +1061,11 @@
         "nixpkgs": "nixpkgs_6"
       },
       "locked": {
-        "lastModified": 1784349029,
-        "narHash": "sha256-nkFu+o3UUyH2OtYNs5tItf4vNZttUj8uOeYo+290diM=",
+        "lastModified": 1784349997,
+        "narHash": "sha256-7j7ut5bcbgT7h8kkV8hUB6kzDR7UMKA0JwrW5zypaj4=",
         "owner": "pleme-io",
         "repo": "substrate",
-        "rev": "3713c8d972243df6c547d48244fa61e54620e2d9",
+        "rev": "7db0a2fc9255e716458116568680495ac188d66b",
         "type": "github"
       },
       "original": {
