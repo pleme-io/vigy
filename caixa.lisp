@@ -17,14 +17,14 @@
 ;;   vigy           — facade re-exporting the lib surface.
 
 (defcaixa
-  :nome        "vigy"
-  :versao      "0.1.0"
-  :kind        Biblioteca
-  :edicao      "2026"
-  :descricao   "Always-on tatara-lisp reconciler runtime: small reconcilers authored in tatara-lisp, embeddable in mado/tear/vitrine/carve. SeaORM/SQLite persistence; gRPC + GraphQL + OpenAPI-derived REST control surfaces."
+  :nome "vigy"
+  :versao "0.1.0"
+  :kind Biblioteca
+  :edicao "2026"
+  :descricao "Always-on tatara-lisp reconciler runtime: small reconcilers authored in tatara-lisp, embeddable in mado/tear/vitrine/carve. SeaORM/SQLite persistence; gRPC + GraphQL + OpenAPI-derived REST control surfaces."
   :repositorio "github:pleme-io/vigy"
-  :licenca     "MIT"
-  :autores     ("pleme-io")
-  :etiquetas   ("vigy" "reconciler" "tatara-lisp" "mado" "tear" "always-on" "caixa-biblioteca")
-  :deps        ("tatara-lisp" "tatara-lisp-eval" "shikumi")
-  :deps-dev    ())
+  :licenca "MIT"
+  :autores ("pleme-io")
+  :etiquetas ("vigy" "reconciler" "tatara-lisp" "mado" "tear" "always-on" "caixa-biblioteca")
+  :deps ("tatara-lisp" "tatara-lisp-eval" "shikumi")
+  :deps-dev ())
