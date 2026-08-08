@@ -6,3 +6,8 @@
 *.db
 *.db-shm
 *.db-wal
+
+# DELTA-ONLY spec doctrine: the committed Cargo.gen.lock is the build
+# sidecar; substrate lockfile-builder.nix:338 short-circuits on the delta and
+# never reads this file. gen build writes both; only the delta is tracked.
+Cargo.build-spec.json
