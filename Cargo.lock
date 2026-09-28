@@ -1755,6 +1755,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "monosashi"
+version = "0.3.60"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7984b9a784195a719a35fd6134452932a31307811f019745aacb5ff9ef7df75b"
+
+[[package]]
 name = "multer"
 version = "3.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3244,23 +3250,44 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "55937e1799185b12863d447f42597ed69d9928686b8d88a1df17376a097d8369"
 
 [[package]]
-name = "tatara-lisp"
-version = "0.3.4"
+name = "tatara-closed-set"
+version = "0.3.60"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "00a94c0c1d40aae6109b2450b8b2a15ccc79a01461836753351b4bfd3a50cec9"
+checksum = "1a3e5da2baa94bc4804ebb05998ba824b52b37c8ba3891f41e5eca273d5dc6d0"
+dependencies = [
+ "tatara-closed-set-derive",
+]
+
+[[package]]
+name = "tatara-closed-set-derive"
+version = "0.3.60"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6787e168d1854f9f70c86bdbaf100865df053ec2e1f0fc801345f38845ebc3c5"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
+
+[[package]]
+name = "tatara-lisp"
+version = "0.3.60"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3655316ed3ebd672ac8cdcee6c9dae487a431628d563812b13ad6cff3da0a2f5"
 dependencies = [
  "blake3",
  "serde",
  "serde_json",
+ "tatara-closed-set",
  "tatara-lisp-derive",
  "thiserror",
 ]
 
 [[package]]
 name = "tatara-lisp-derive"
-version = "0.3.4"
+version = "0.3.60"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bdb05368da33f122fde05fd3f67a827022ef65ac4efbca6e27e0ea6e4f8036a9"
+checksum = "f17fa04dfac259fa17e2c83672058d858e0c6e7e00af1cd6aecb8bcb888bda79"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3269,10 +3296,12 @@ dependencies = [
 
 [[package]]
 name = "tatara-lisp-eval"
-version = "0.3.4"
+version = "0.3.60"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4c29452035437cb3eafc8ba8cace34ece2e4e58d7e9f2eceae9d9425c7c27e75"
+checksum = "d29e75d9f8d752cfe7c86978f3b5f2d2cc3fc35bab8aab54a72a57f6313ee3c2"
 dependencies = [
+ "monosashi",
+ "tatara-closed-set",
  "tatara-lisp",
  "thiserror",
 ]
