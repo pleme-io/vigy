@@ -8,5 +8,8 @@
   outputs = { substrate, ... }: substrate.rust.workspace {
     src = ./.;
     member = "vigy";
+    # vigy-rpc's build script runs protoc (tonic-build); the name reaches the
+    # build and the dev shell the release gate tests in.
+    nativeBuildInputs = [ "protobuf" ];
   };
 }
