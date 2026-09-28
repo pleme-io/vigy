@@ -81,6 +81,20 @@ struct Inner {
     /// `with_extensions(...)` to add their own intrinsics; the default
     /// is `vigy_eval::standard_extensions()`.
     extensions: Vec<ExtensionHandle>,
+    /// Which host this runtime ticks for. See [`serves`].
+    host: Option<String>,
+}
+
+/// The label a vigy carries to name the one host that ticks it.
+pub const HOST_LABEL: &str = "host";
+
+/// Whether a runtime opened for `host` ticks `vigy`. A vigy labelled
+/// `host=X` is ticked only by a runtime opened for `X`; an unlabelled vigy
+/// only by a runtime opened without a host (`vigy serve`, the CLI). Every
+/// runtime still lists, inspects and force-ticks every vigy in the store:
+/// the selector decides who schedules, not who can see.
+pub fn serves(host: Option<&str>, vigy: &Vigy) -> bool {
+    vigy.labels.get(HOST_LABEL) == host
 }
 
 const EVENT_BUS_CAPACITY: usize = 1024;
@@ -91,13 +105,13 @@ impl RuntimeHandle {
     /// tick tasks for any enabled vigies recorded there.
     pub async fn open(path: &Path) -> Result<Self> {
         let store = Store::open(path).await?;
-        Self::with_store(store, vigy_eval::standard_extensions()).await
+        Self::with_store(store, vigy_eval::standard_extensions(), None).await
     }
 
     /// In-memory store — only useful in tests + ephemeral one-shot runs.
     pub async fn open_in_memory() -> Result<Self> {
         let store = Store::open_in_memory().await?;
-        Self::with_store(store, vigy_eval::standard_extensions()).await
+        Self::with_store(store, vigy_eval::standard_extensions(), None).await
     }
 
     /// Open with a custom extension bundle. mado calls this with
@@ -110,10 +124,44 @@ impl RuntimeHandle {
         extensions: Vec<ExtensionHandle>,
     ) -> Result<Self> {
         let store = Store::open(path).await?;
-        Self::with_store(store, extensions).await
+        Self::with_store(store, extensions, None).await
     }
 
-    async fn with_store(store: Store, extensions: Vec<ExtensionHandle>) -> Result<Self> {
+    /// Open for one named host: only vigies labelled `host=<host>` are
+    /// scheduled here, so two processes sharing one store never tick the
+    /// same vigy twice, and a vigy never runs where its host's primitives
+    /// are missing. The results land in the shared store either way, so
+    /// any host reads them with [`recent_runs`](Self::recent_runs).
+    pub async fn open_with_extensions_for(
+        path: &Path,
+        extensions: Vec<ExtensionHandle>,
+        host: &str,
+    ) -> Result<Self> {
+        let store = Store::open(path).await?;
+        Self::with_store(store, extensions, Some(host.to_string())).await
+    }
+
+    /// In-memory, for one named host (tests).
+    pub async fn open_in_memory_for(host: &str) -> Result<Self> {
+        let store = Store::open_in_memory().await?;
+        Self::with_store(store, vigy_eval::standard_extensions(), Some(host.to_string())).await
+    }
+
+    /// The host this runtime schedules for, if any.
+    pub fn host(&self) -> Option<&str> {
+        self.inner.host.as_deref()
+    }
+
+    /// Whether this runtime schedules `vigy`.
+    pub fn serves(&self, vigy: &Vigy) -> bool {
+        serves(self.host(), vigy)
+    }
+
+    async fn with_store(
+        store: Store,
+        extensions: Vec<ExtensionHandle>,
+        host: Option<String>,
+    ) -> Result<Self> {
         let (bus, _) = broadcast::channel(EVENT_BUS_CAPACITY);
         let handle = Self {
             inner: Arc::new(Inner {
@@ -121,17 +169,19 @@ impl RuntimeHandle {
                 tasks: Mutex::new(HashMap::new()),
                 bus,
                 extensions,
+                host,
             }),
         };
-        // Resume any pre-existing vigies.
+        // Resume the pre-existing vigies this host schedules.
         let existing = handle.inner.store.list_vigies(None).await?;
-        let count = existing.len();
+        let mut resumed = 0usize;
         for v in existing {
-            if v.enabled {
+            if v.enabled && handle.serves(&v) {
                 handle.spawn_task(v).await;
+                resumed += 1;
             }
         }
-        info!(resumed = count, "runtime ready");
+        info!(resumed, host = handle.host().unwrap_or("-"), "runtime ready");
         Ok(handle)
     }
 
@@ -140,7 +190,7 @@ impl RuntimeHandle {
     /// before the new one starts to guarantee no concurrent ticks.
     pub async fn register_or_update(&self, vigy: Vigy) -> Result<Vigy> {
         self.inner.store.upsert_vigy(&vigy).await?;
-        if vigy.enabled {
+        if vigy.enabled && self.serves(&vigy) {
             self.spawn_task(vigy.clone()).await;
         } else {
             self.cancel_task(&vigy.id).await;
@@ -151,7 +201,9 @@ impl RuntimeHandle {
     pub async fn enable(&self, id: &VigyId) -> Result<Vigy> {
         self.inner.store.set_enabled(id, true).await?;
         let v = self.inner.store.get_vigy(id).await?;
-        self.spawn_task(v.clone()).await;
+        if self.serves(&v) {
+            self.spawn_task(v.clone()).await;
+        }
         Ok(v)
     }
 
@@ -561,6 +613,54 @@ mod tests {
         let run = rt.tick_now(&id).await.unwrap();
         assert!(matches!(run.result, ResultStatus::Failed));
         assert!(run.error.is_some());
+    }
+
+    fn labelled(name: &str, host: Option<&str>) -> Vigy {
+        let mut v = Vigy::new(name, "(vigy-noop)", TickInterval::from_millis(100).unwrap()).unwrap();
+        if let Some(h) = host {
+            v.labels.insert(HOST_LABEL, h).unwrap();
+        }
+        v
+    }
+
+    #[test]
+    fn selector_matches_only_the_named_host() {
+        let unlabelled = labelled("a", None);
+        let arnes = labelled("b", Some("arnes"));
+        assert!(serves(None, &unlabelled));
+        assert!(!serves(Some("arnes"), &unlabelled));
+        assert!(serves(Some("arnes"), &arnes));
+        assert!(!serves(Some("mado"), &arnes));
+        assert!(!serves(None, &arnes));
+    }
+
+    #[tokio::test]
+    async fn a_host_runtime_schedules_only_its_own_vigies() {
+        let rt = RuntimeHandle::open_in_memory_for("arnes").await.unwrap();
+        let mine = labelled("mine", Some("arnes"));
+        let other = labelled("other", Some("mado"));
+        let (mine_id, other_id) = (mine.id.clone(), other.id.clone());
+        rt.register_or_update(mine).await.unwrap();
+        rt.register_or_update(other).await.unwrap();
+        let tasks = rt.inner.tasks.lock().await;
+        assert!(tasks.contains_key(&mine_id));
+        assert!(!tasks.contains_key(&other_id));
+        drop(tasks);
+        // Both are stored and visible, and the foreign one can still be forced.
+        assert_eq!(rt.list(None).await.unwrap().len(), 2);
+        assert_eq!(rt.tick_now(&other_id).await.unwrap().actions.len(), 1);
+        assert_eq!(rt.recent_runs(&other_id, 5).await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn enabling_a_foreign_vigy_does_not_schedule_it() {
+        let rt = RuntimeHandle::open_in_memory_for("arnes").await.unwrap();
+        let other = labelled("other", Some("mado"));
+        let id = other.id.clone();
+        rt.register_or_update(other).await.unwrap();
+        rt.disable(&id).await.unwrap();
+        rt.enable(&id).await.unwrap();
+        assert!(!rt.inner.tasks.lock().await.contains_key(&id));
     }
 
     #[test]
