@@ -1,12 +1,13 @@
 # vigy
 
-Always-on tatara-lisp reconciler runtime (caixa Biblioteca kind).
+Always-on reconciler runtime (caixa Biblioteca kind). Vigies are authored in blue,
+which lowers to the tatara-lisp AST this runtime evaluates; every host (mado, tear,
+arnes, escriba) embeds this one runtime.
 
-> **Theory:** `pleme-io/theory/VIGY.md` (TODO — write once primary
-> embedder lands)
+> **Theory:** `pleme-io/theory/VIGY.md` (canonical: blue authoring, one platform, per-tick surfaces)
 > **Operator doc:** `pleme-io/docs/vigy.md` (TODO)
-> **Skill:** `pleme-io/blackmatter-claude/skills/vigy/SKILL.md` (TODO)
-> **Family:** mado (primary embedder), tear (co-host),
+> **Skill:** `pleme-io/blackmatter-pleme/skills/vigy/SKILL.md`
+> **Family:** mado (primary embedder), tear (co-host), arnes, escriba,
 > tatara-lisp (evaluator), vitrine (sibling primitive), carve (sibling).
 
 This library hosts small tatara-lisp reconcilers — *vigies* — inside
