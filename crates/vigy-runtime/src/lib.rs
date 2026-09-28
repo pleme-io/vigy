@@ -81,8 +81,41 @@ struct Inner {
     /// `with_extensions(...)` to add their own intrinsics; the default
     /// is `vigy_eval::standard_extensions()`.
     extensions: Vec<ExtensionHandle>,
-    /// Which host this runtime ticks for. See [`serves`].
-    host: Option<String>,
+    /// Which vigies this runtime schedules.
+    scope: Scope,
+}
+
+/// Which vigies a runtime schedules. Every runtime still lists, inspects and
+/// force-ticks every vigy in the store; the scope decides only who ticks.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Scope {
+    /// Unlabelled vigies only (`vigy serve`, the CLI).
+    Unlabelled,
+    /// Vigies labelled `host=<name>` only.
+    Host(String),
+    /// Vigies labelled `host=<name>`, and the unlabelled ones too: the
+    /// primary host, which keeps ticking what was registered before hosts
+    /// were named.
+    HostAndUnlabelled(String),
+}
+
+impl Scope {
+    #[must_use]
+    pub fn serves(&self, vigy: &Vigy) -> bool {
+        match (self, vigy.labels.get(HOST_LABEL)) {
+            (Self::Unlabelled | Self::HostAndUnlabelled(_), None) => true,
+            (Self::Host(h) | Self::HostAndUnlabelled(h), Some(l)) => h == l,
+            _ => false,
+        }
+    }
+
+    #[must_use]
+    pub fn host(&self) -> Option<&str> {
+        match self {
+            Self::Unlabelled => None,
+            Self::Host(h) | Self::HostAndUnlabelled(h) => Some(h),
+        }
+    }
 }
 
 /// The label a vigy carries to name the one host that ticks it.
@@ -94,7 +127,10 @@ pub const HOST_LABEL: &str = "host";
 /// runtime still lists, inspects and force-ticks every vigy in the store:
 /// the selector decides who schedules, not who can see.
 pub fn serves(host: Option<&str>, vigy: &Vigy) -> bool {
-    vigy.labels.get(HOST_LABEL) == host
+    match host {
+        None => Scope::Unlabelled.serves(vigy),
+        Some(h) => Scope::Host(h.to_string()).serves(vigy),
+    }
 }
 
 const EVENT_BUS_CAPACITY: usize = 1024;
@@ -105,13 +141,13 @@ impl RuntimeHandle {
     /// tick tasks for any enabled vigies recorded there.
     pub async fn open(path: &Path) -> Result<Self> {
         let store = Store::open(path).await?;
-        Self::with_store(store, vigy_eval::standard_extensions(), None).await
+        Self::with_store(store, vigy_eval::standard_extensions(), Scope::Unlabelled).await
     }
 
     /// In-memory store — only useful in tests + ephemeral one-shot runs.
     pub async fn open_in_memory() -> Result<Self> {
         let store = Store::open_in_memory().await?;
-        Self::with_store(store, vigy_eval::standard_extensions(), None).await
+        Self::with_store(store, vigy_eval::standard_extensions(), Scope::Unlabelled).await
     }
 
     /// Open with a custom extension bundle. mado calls this with
@@ -124,7 +160,7 @@ impl RuntimeHandle {
         extensions: Vec<ExtensionHandle>,
     ) -> Result<Self> {
         let store = Store::open(path).await?;
-        Self::with_store(store, extensions, None).await
+        Self::with_store(store, extensions, Scope::Unlabelled).await
     }
 
     /// Open for one named host: only vigies labelled `host=<host>` are
@@ -138,29 +174,46 @@ impl RuntimeHandle {
         host: &str,
     ) -> Result<Self> {
         let store = Store::open(path).await?;
-        Self::with_store(store, extensions, Some(host.to_string())).await
+        Self::with_store(store, extensions, Scope::Host(host.to_string())).await
     }
 
     /// In-memory, for one named host (tests).
     pub async fn open_in_memory_for(host: &str) -> Result<Self> {
         let store = Store::open_in_memory().await?;
-        Self::with_store(store, vigy_eval::standard_extensions(), Some(host.to_string())).await
+        Self::with_store(store, vigy_eval::standard_extensions(), Scope::Host(host.to_string())).await
+    }
+
+    /// Open with an explicit [`Scope`]. A primary host passes
+    /// [`Scope::HostAndUnlabelled`] so vigies registered without a host keep
+    /// ticking there.
+    pub async fn open_with_scope(
+        path: &Path,
+        extensions: Vec<ExtensionHandle>,
+        scope: Scope,
+    ) -> Result<Self> {
+        let store = Store::open(path).await?;
+        Self::with_store(store, extensions, scope).await
     }
 
     /// The host this runtime schedules for, if any.
     pub fn host(&self) -> Option<&str> {
-        self.inner.host.as_deref()
+        self.inner.scope.host()
+    }
+
+    /// What this runtime schedules.
+    pub fn scope(&self) -> &Scope {
+        &self.inner.scope
     }
 
     /// Whether this runtime schedules `vigy`.
     pub fn serves(&self, vigy: &Vigy) -> bool {
-        serves(self.host(), vigy)
+        self.inner.scope.serves(vigy)
     }
 
     async fn with_store(
         store: Store,
         extensions: Vec<ExtensionHandle>,
-        host: Option<String>,
+        scope: Scope,
     ) -> Result<Self> {
         let (bus, _) = broadcast::channel(EVENT_BUS_CAPACITY);
         let handle = Self {
@@ -169,7 +222,7 @@ impl RuntimeHandle {
                 tasks: Mutex::new(HashMap::new()),
                 bus,
                 extensions,
-                host,
+                scope,
             }),
         };
         // Resume the pre-existing vigies this host schedules.
@@ -632,6 +685,17 @@ mod tests {
         assert!(serves(Some("arnes"), &arnes));
         assert!(!serves(Some("mado"), &arnes));
         assert!(!serves(None, &arnes));
+    }
+
+    #[test]
+    fn the_primary_scope_adds_unlabelled_and_nothing_else() {
+        let (unlabelled, mado, arnes) = (labelled("a", None), labelled("b", Some("mado")), labelled("c", Some("arnes")));
+        let primary = Scope::HostAndUnlabelled("mado".into());
+        assert!(primary.serves(&unlabelled) && primary.serves(&mado) && !primary.serves(&arnes));
+        assert!(Scope::Unlabelled.serves(&unlabelled) && !Scope::Unlabelled.serves(&mado));
+        assert!(!Scope::Host("mado".into()).serves(&unlabelled));
+        assert_eq!(primary.host(), Some("mado"));
+        assert_eq!(Scope::Unlabelled.host(), None);
     }
 
     #[tokio::test]
