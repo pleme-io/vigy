@@ -1053,7 +1053,7 @@ fn json_to_lisp(v: &JsonValue) -> LispValue {
         JsonValue::String(s) => LispValue::Str(Arc::from(s.as_str())),
         JsonValue::Array(items) => {
             let converted: Vec<LispValue> = items.iter().map(json_to_lisp).collect();
-            LispValue::List(Arc::new(converted))
+            LispValue::List(Arc::new(converted.into()))
         }
         JsonValue::Object(obj) => {
             let mut map = std::collections::HashMap::new();
@@ -1063,7 +1063,7 @@ fn json_to_lisp(v: &JsonValue) -> LispValue {
                     json_to_lisp(val),
                 );
             }
-            LispValue::Map(Arc::new(map))
+            LispValue::Map(Arc::new(map.into()))
         }
     }
 }

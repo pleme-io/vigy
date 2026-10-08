@@ -73,8 +73,8 @@ colored = "2.1"
 # version; a `git =` source here would resolve to HEAD locally and to
 # the registry downstream, which is exactly the split-brain that
 # consolidation removed. One registry version, everywhere.
-tatara-lisp = { version = "0.3.3" }
-tatara-lisp-eval = { version = "0.3.3" }
+tatara-lisp = { version = "0.4" }
+tatara-lisp-eval = { version = "0.4" }
 
 # Pleme-io substrate primitives
 shikumi = { version = "0.1" }
