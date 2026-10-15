@@ -6,6 +6,7 @@
 //! agnostic use).
 
 use crate::entities::*;
+use crate::retention::RunRetention;
 use crate::traits::VigyStore;
 use crate::Migrator;
 use async_trait::async_trait;
@@ -41,6 +42,7 @@ pub type Store = SeaormStore;
 
 pub struct SeaormStore {
     db: DatabaseConnection,
+    retention: RunRetention,
 }
 
 impl SeaormStore {
@@ -55,14 +57,26 @@ impl SeaormStore {
         opts.sqlx_logging(false);
         let db = Database::connect(opts).await?;
         Migrator::up(&db, None).await?;
-        Ok(Self { db })
+        Ok(Self {
+            db,
+            retention: RunRetention::default(),
+        })
     }
 
     /// In-memory DB for tests.
     pub async fn open_in_memory() -> Result<Self> {
         let db = Database::connect("sqlite::memory:").await?;
         Migrator::up(&db, None).await?;
-        Ok(Self { db })
+        Ok(Self {
+            db,
+            retention: RunRetention::default(),
+        })
+    }
+
+    #[must_use]
+    pub fn with_run_retention(mut self, retention: RunRetention) -> Self {
+        self.retention = retention;
+        self
     }
 
     // ---------- vigy CRUD ----------
@@ -164,6 +178,22 @@ impl SeaormStore {
             actions_json: Set(serde_json::to_string(&run.actions)?),
         };
         am.insert(&self.db).await?;
+        if let Some(keep) = self.retention.limit() {
+            let floor = VigyRunEntity::find()
+                .filter(vigy_run::Column::VigyId.eq(run.vigy_id.to_string()))
+                .order_by_desc(vigy_run::Column::Id)
+                .offset(keep - 1)
+                .limit(1)
+                .one(&self.db)
+                .await?;
+            if let Some(floor) = floor {
+                VigyRunEntity::delete_many()
+                    .filter(vigy_run::Column::VigyId.eq(run.vigy_id.to_string()))
+                    .filter(vigy_run::Column::Id.lt(floor.id))
+                    .exec(&self.db)
+                    .await?;
+            }
+        }
         Ok(())
     }
 

@@ -26,10 +26,12 @@
 pub mod entities;
 pub mod inmemory;
 pub mod migrator;
+pub mod retention;
 pub mod store;
 pub mod traits;
 
 pub use inmemory::InMemoryStore;
 pub use migrator::Migrator;
+pub use retention::{RunRetention, DEFAULT_KEEP_RUNS_PER_VIGY};
 pub use store::{SeaormStore, Store, StoreError};
 pub use traits::VigyStore;

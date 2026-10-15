@@ -5,6 +5,7 @@
 //! types, same error variants. Difference: state lives in `parking_lot`
 //! locks behind an `Arc`; the process exit erases everything.
 
+use crate::retention::RunRetention;
 use crate::store::{Result, StoreError};
 use crate::traits::VigyStore;
 use async_trait::async_trait;
@@ -23,11 +24,18 @@ struct State {
 #[derive(Clone, Default)]
 pub struct InMemoryStore {
     state: Arc<RwLock<State>>,
+    retention: RunRetention,
 }
 
 impl InMemoryStore {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    #[must_use]
+    pub fn with_run_retention(mut self, retention: RunRetention) -> Self {
+        self.retention = retention;
+        self
     }
 }
 
@@ -88,7 +96,24 @@ impl VigyStore for InMemoryStore {
     }
 
     async fn insert_run(&self, run: &VigyRun) -> Result<()> {
-        self.state.write().runs.push(run.clone());
+        let mut state = self.state.write();
+        state.runs.push(run.clone());
+        if let Some(keep) = self.retention.limit() {
+            let mut ids: Vec<String> = state
+                .runs
+                .iter()
+                .filter(|r| r.vigy_id == run.vigy_id)
+                .map(|r| r.id.to_string())
+                .collect();
+            if ids.len() as u64 > keep {
+                ids.sort_unstable();
+                let cut = ids.len() - usize::try_from(keep).unwrap_or(usize::MAX);
+                let floor = ids[cut].clone();
+                state
+                    .runs
+                    .retain(|r| r.vigy_id != run.vigy_id || r.id.to_string() >= floor);
+            }
+        }
         Ok(())
     }
 
