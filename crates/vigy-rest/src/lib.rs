@@ -16,7 +16,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use utoipa::{OpenApi, ToSchema};
 use vigy_runtime::RuntimeHandle;
-use vigy_types::{Labels, TickInterval, Vigy, VigyId, VigyRun, VigyState};
+use vigy_types::{Labels, Language, TickInterval, Vigy, VigyId, VigyRun, VigyState};
 
 /// Build the axum Router for the REST surface. Caller `.bind()`s it.
 ///
@@ -50,7 +50,7 @@ async fn openapi_json() -> impl IntoResponse {
     info(title = "vigy REST API", version = "0.1.0", license(name = "MIT")),
     paths(list_vigies, register_vigy, get_vigy, update_vigy, delete_vigy,
           get_state, tick_vigy, enable_vigy, disable_vigy),
-    components(schemas(Vigy, VigyRun, VigyState, RegisterPayload, UpdatePayload, ErrorBody))
+    components(schemas(Vigy, Language, VigyRun, VigyState, RegisterPayload, UpdatePayload, ErrorBody))
 )]
 struct ApiDoc;
 
@@ -60,6 +60,8 @@ struct ApiDoc;
 pub struct RegisterPayload {
     pub name: String,
     pub program: String,
+    #[serde(default)]
+    pub language: Language,
     #[serde(default = "default_tick_ms")]
     pub tick_interval_ms: u64,
     #[serde(default = "default_true")]
@@ -121,7 +123,7 @@ async fn register_vigy(
         Ok(t) => t,
         Err(e) => return err(StatusCode::BAD_REQUEST, e),
     };
-    let mut v = match Vigy::new(p.name, p.program, interval) {
+    let mut v = match Vigy::in_language(p.name, p.program, p.language, interval) {
         Ok(v) => v,
         Err(e) => return err(StatusCode::BAD_REQUEST, e),
     };

@@ -22,10 +22,18 @@ pub struct VigyId(String);
 
 impl VigyId {
     pub fn from_name_and_program(name: &str, program: &str) -> Self {
+        Self::from_parts(name, program, crate::Language::TataraLisp)
+    }
+
+    pub fn from_parts(name: &str, program: &str, language: crate::Language) -> Self {
         let mut hasher = blake3::Hasher::new();
         hasher.update(name.as_bytes());
         hasher.update(&[0u8]);
         hasher.update(program.as_bytes());
+        if language != crate::Language::TataraLisp {
+            hasher.update(&[0u8]);
+            hasher.update(language.as_str().as_bytes());
+        }
         let hex = hasher.finalize().to_hex();
         Self(hex.as_str()[..16].to_string())
     }
@@ -113,6 +121,21 @@ mod tests {
         let id = VigyId::from_name_and_program("x", "y");
         assert_eq!(id.as_str().len(), 16);
         assert!(id.as_str().chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn a_tatara_lisp_id_is_the_id_minted_before_languages_existed() {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(b"x\0y");
+        let before = hasher.finalize().to_hex().as_str()[..16].to_string();
+        assert_eq!(
+            VigyId::from_parts("x", "y", crate::Language::TataraLisp).as_str(),
+            before
+        );
+        assert_ne!(
+            VigyId::from_parts("x", "y", crate::Language::Blue).as_str(),
+            before
+        );
     }
 
     #[test]

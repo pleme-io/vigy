@@ -24,6 +24,9 @@ pub enum Error {
     #[error("vigy program empty")]
     EmptyProgram,
 
+    #[error("unknown vigy language {language:?}: expected tatara-lisp or blue")]
+    UnknownLanguage { language: String },
+
     #[error("serde: {0}")]
     Serde(#[from] serde_json::Error),
 

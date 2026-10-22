@@ -29,7 +29,7 @@ use colored::Colorize;
 use std::path::PathBuf;
 use std::time::Duration;
 use vigy_runtime::RuntimeHandle;
-use vigy_types::{TickInterval, Vigy, VigyId};
+use vigy_types::{Language, TickInterval, Vigy, VigyId};
 
 #[derive(Debug, Parser)]
 #[command(name = "vigy", version, about = "always-on tatara-lisp reconciler runtime")]
@@ -61,6 +61,9 @@ enum Cmd {
         /// Register but leave disabled (no ticking).
         #[arg(long)]
         disabled: bool,
+        /// Source language: tatara-lisp or blue.
+        #[arg(long, default_value_t = Language::TataraLisp)]
+        language: Language,
     },
     List {
         #[arg(long)]
@@ -129,11 +132,12 @@ async fn main() -> Result<()> {
             every,
             labels,
             disabled,
+            language,
         } => {
             let program = std::fs::read_to_string(&file)
                 .with_context(|| format!("read {}", file.display()))?;
             let interval = TickInterval::from_millis(every)?;
-            let mut vigy = Vigy::new(name, program, interval)?;
+            let mut vigy = Vigy::in_language(name, program, language, interval)?;
             for kv in labels {
                 let (k, v) = kv
                     .split_once('=')

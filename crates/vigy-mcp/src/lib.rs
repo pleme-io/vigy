@@ -31,13 +31,14 @@ pub fn tool_catalog() -> Vec<ToolEntry> {
     vec![
         ToolEntry {
             name: "vigy_register",
-            description: "Register a new tatara-lisp reconciler (vigy). Idempotent: same name+program yields the same id.",
+            description: "Register a new reconciler (vigy) in tatara-lisp or blue. Idempotent: same name+program yields the same id.",
             input_schema: json!({
                 "type": "object",
                 "required": ["name", "program"],
                 "properties": {
                     "name": { "type": "string" },
-                    "program": { "type": "string", "description": "tatara-lisp source" },
+                    "program": { "type": "string", "description": "source in `language`" },
+                    "language": { "type": "string", "enum": ["tatara-lisp", "blue"], "default": "tatara-lisp" },
                     "tick_interval_ms": { "type": "integer", "minimum": 100, "default": 1000 },
                     "enabled": { "type": "boolean", "default": true },
                     "labels": { "type": "object", "additionalProperties": { "type": "string" } }
@@ -127,7 +128,11 @@ pub async fn dispatch(
                 .and_then(|v| v.as_u64())
                 .unwrap_or(1000);
             let interval = TickInterval::from_millis(every)?;
-            let mut vigy = Vigy::new(n.to_string(), p.to_string(), interval)?;
+            let language = match args.get("language").and_then(|v| v.as_str()) {
+                Some(l) => l.parse()?,
+                None => vigy_types::Language::TataraLisp,
+            };
+            let mut vigy = Vigy::in_language(n.to_string(), p.to_string(), language, interval)?;
             if let Some(enabled) = args.get("enabled").and_then(|v| v.as_bool()) {
                 vigy.enabled = enabled;
             }

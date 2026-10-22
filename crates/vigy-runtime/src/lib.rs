@@ -49,7 +49,7 @@ use tokio::task::JoinHandle;
 use tokio::time::sleep;
 use tracing::{debug, error, info, warn};
 
-use vigy_eval::{ExtensionHandle, LispReconciler, Reconciler, VigyHost};
+use vigy_eval::{ExtensionHandle, ProgramReconciler, Reconciler, VigyHost};
 use vigy_store::{Store, StoreError};
 use vigy_types::{ReconcileAction, ResultStatus, Vigy, VigyId, VigyRun};
 
@@ -491,14 +491,15 @@ async fn run_once_with(
     }
 }
 
-/// Backwards-compatible default tick — builds a LispReconciler with the
+/// Default tick — builds a ProgramReconciler in the vigy's language with the
 /// runtime's extensions and dispatches through [`run_once_with`].
 async fn run_once(
     store: &vigy_store::Store,
     vigy: &Vigy,
     extensions: &[ExtensionHandle],
 ) -> VigyRun {
-    let reconciler = LispReconciler::with_extensions(vigy.program.clone(), extensions.to_vec());
+    let reconciler =
+        ProgramReconciler::new(vigy.language, vigy.program.clone(), extensions.to_vec());
     run_once_with(store, vigy, &reconciler).await
 }
 
@@ -571,6 +572,26 @@ mod tests {
             .and_then(|v| v.as_i64())
             .unwrap_or(0);
         assert_eq!(tick_count, 3);
+    }
+
+    #[tokio::test]
+    async fn a_blue_vigy_ticks_through_the_store_and_keeps_its_kv() {
+        let rt = RuntimeHandle::open_in_memory().await.unwrap();
+        let v = Vigy::in_language(
+            "blue-counter",
+            "vigy_incr(\"hits\")\nvigy_pull(\"upstream\")\n",
+            vigy_types::Language::Blue,
+            TickInterval::from_millis(100).unwrap(),
+        )
+        .unwrap();
+        let id = v.id.clone();
+        rt.register_or_update(v).await.unwrap();
+        let first = rt.tick_now(&id).await.unwrap();
+        assert!(matches!(first.result, ResultStatus::Ok), "{:?}", first.error);
+        rt.tick_now(&id).await.unwrap();
+        let kv = rt.inner.store.load_kv(&id).await.unwrap();
+        assert_eq!(kv.get("hits").and_then(|v| v.as_i64()), Some(2));
+        assert_eq!(first.actions.len(), 1);
     }
 
     #[tokio::test]

@@ -11,7 +11,55 @@ impl MigratorTrait for Migrator {
         vec![
             Box::new(m20260520_000001_init::Migration),
             Box::new(m20260521_000002_vigy_kv::Migration),
+            Box::new(m20261022_000003_vigy_language::Migration),
         ]
+    }
+}
+
+mod m20261022_000003_vigy_language {
+    use sea_orm_migration::prelude::*;
+
+    pub struct Migration;
+    impl MigrationName for Migration {
+        fn name(&self) -> &str {
+            "m20261022_000003_vigy_language"
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MigrationTrait for Migration {
+        async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            manager
+                .alter_table(
+                    Table::alter()
+                        .table(Vigies::Table)
+                        .add_column(
+                            ColumnDef::new(Vigies::Language)
+                                .string()
+                                .not_null()
+                                .default("tatara-lisp"),
+                        )
+                        .to_owned(),
+                )
+                .await
+        }
+
+        async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            manager
+                .alter_table(
+                    Table::alter()
+                        .table(Vigies::Table)
+                        .drop_column(Vigies::Language)
+                        .to_owned(),
+                )
+                .await
+        }
+    }
+
+    #[derive(Iden)]
+    enum Vigies {
+        Table,
+        Language,
     }
 }
 

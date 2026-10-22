@@ -13,6 +13,8 @@ type Vigy {
   id: ID!
   name: String!
   program: String!
+  "tatara-lisp | blue"
+  language: String!
   tickIntervalMs: Int!
   enabled: Boolean!
   createdAt: DateTime!
@@ -77,6 +79,7 @@ type Query {
 input RegisterVigyInput {
   name: String!
   program: String!
+  language: String = "tatara-lisp"
   tickIntervalMs: Int = 1000
   enabled: Boolean = true
   labels: JSON

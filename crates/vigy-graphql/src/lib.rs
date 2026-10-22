@@ -110,6 +110,7 @@ pub struct VigyDto {
     pub id: ID,
     pub name: String,
     pub program: String,
+    pub language: String,
     pub tick_interval_ms: i64,
     pub enabled: bool,
     pub created_at: String,
@@ -123,6 +124,7 @@ impl From<vigy_types::Vigy> for VigyDto {
             id: ID::from(v.id.to_string()),
             name: v.name,
             program: v.program,
+            language: v.language.to_string(),
             tick_interval_ms: v.tick_interval.as_millis() as i64,
             enabled: v.enabled,
             created_at: v

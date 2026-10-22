@@ -88,14 +88,17 @@
 //! the runtime), evaluates, returns the host (now populated). The
 //! runtime drains buffers + persists dirty kv keys.
 
+use blue_lang_host::{host, host_effect_names, Budget, Entry, Program};
 use serde_json::Value as JsonValue;
 use std::collections::BTreeMap;
 use tatara_lisp::read_spanned;
 use tatara_lisp_eval::{
-    install_full_stdlib_with, Arity, EvalError, Interpreter, Value as LispValue,
+    install_full_stdlib_with, Arity, EvalError, Interpreter, IntoValue, Value as LispValue,
 };
 use thiserror::Error;
-use vigy_types::{Condition, ConditionStatus, ReconcileAction, ReconcileKind};
+use vigy_types::{Condition, ConditionStatus, Language, ReconcileAction, ReconcileKind};
+
+pub use blue_lang_host::{Host, HostFn};
 
 // Re-exports — hosts that ship their own HostExtension need access to
 // the lisp surface to register intrinsics. Exposing these here keeps
@@ -124,6 +127,8 @@ pub enum EvalErr {
     Parse(String),
     #[error("eval: {0}")]
     Eval(String),
+    #[error("blue: {0}")]
+    Blue(#[from] blue_lang_host::Error),
 }
 
 pub type Result<T> = std::result::Result<T, EvalErr>;
@@ -224,12 +229,9 @@ pub fn evaluate_with_extensions(
 /// touching `Box<dyn HostExtension>`. Equivalent to installing the
 /// `standard_extensions()` list one at a time.
 pub fn install_vigy_intrinsics(interp: &mut Interpreter<VigyHost>) {
-    install_action_intrinsics(interp);
-    install_state_intrinsics(interp);
-    install_kv_intrinsics(interp);
-    install_convergence_intrinsics(interp);
-    install_scheduling_intrinsics(interp);
-    install_diagnostic_intrinsics(interp);
+    for rows in TATARA {
+        install_rows(interp, rows);
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -252,6 +254,10 @@ pub trait HostExtension: Send + Sync {
     /// default behaviour). Across different interpreter instances each
     /// install is independent.
     fn install(&self, interp: &mut Interpreter<VigyHost>);
+
+    fn install_blue(&self, interp: &mut Interpreter<VigyHost>) {
+        self.install(interp);
+    }
 }
 
 /// Shared handle for a HostExtension. `Arc` chosen over `Box` so the
@@ -375,487 +381,450 @@ impl Reconciler for ChainReconciler {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────
-// Actions
-// ─────────────────────────────────────────────────────────────────
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum IntrinsicError {
+    #[error("expected {expected}, got {got}")]
+    Type {
+        expected: &'static str,
+        got: &'static str,
+    },
+    #[error("{0}")]
+    Invalid(String),
+}
 
-fn install_action_intrinsics(interp: &mut Interpreter<VigyHost>) {
-    // (vigy-emit kind payload?)
-    interp.register_fn(
-        "vigy-emit",
-        Arity::AtLeast(1),
-        |args: &[LispValue], host: &mut VigyHost, sp| {
-            if args.is_empty() || args.len() > 2 {
-                return Err(EvalError::native_fn(
-                    "vigy-emit",
-                    format!("expected 1 or 2 args (kind, payload?), got {}", args.len()),
-                    sp,
-                ));
+impl IntrinsicError {
+    fn at(self, name: &'static str, sp: Span) -> EvalError {
+        match self {
+            IntrinsicError::Type { expected, got } => EvalError::type_mismatch(expected, got, sp),
+            IntrinsicError::Invalid(reason) => EvalError::native_fn(name, reason, sp),
+        }
+    }
+}
+
+type Unit = std::result::Result<(), IntrinsicError>;
+
+#[host(prefix = "vigy_")]
+impl VigyHost {
+    fn emit(&mut self, kind: LispValue, payload: Option<LispValue>) -> std::result::Result<(), IntrinsicError> {
+        let kind = parse_kind(&text(&kind)?)?;
+        self.actions.push(ReconcileAction {
+            kind,
+            payload: payload.as_ref().map(lisp_to_json),
+            result: None,
+            message: None,
+        });
+        Ok(())
+    }
+
+    fn noop(&mut self) {
+        self.actions.push(ReconcileAction::noop());
+    }
+
+    fn defer(&mut self, reason: LispValue) {
+        self.actions
+            .push(ReconcileAction::defer(reason.to_display_string()));
+    }
+
+    fn pull(&mut self, payload: LispValue) {
+        self.actions.push(ReconcileAction::pull(lisp_to_json(&payload)));
+    }
+
+    fn push(&mut self, payload: LispValue) {
+        self.actions.push(ReconcileAction::push(lisp_to_json(&payload)));
+    }
+
+    fn create(&mut self, payload: LispValue) {
+        self.actions
+            .push(ReconcileAction::create(lisp_to_json(&payload)));
+    }
+
+    fn update(&mut self, payload: LispValue) {
+        self.actions
+            .push(ReconcileAction::update(lisp_to_json(&payload)));
+    }
+
+    fn delete_action(&mut self, payload: LispValue) {
+        self.actions
+            .push(ReconcileAction::delete(lisp_to_json(&payload)));
+    }
+
+    fn apply(&mut self, payload: LispValue) {
+        self.actions.push(ReconcileAction::apply(lisp_to_json(&payload)));
+    }
+
+    fn restart(&mut self, payload: LispValue) {
+        self.actions
+            .push(ReconcileAction::restart(lisp_to_json(&payload)));
+    }
+
+    fn desired(&mut self, key: LispValue, value: LispValue) -> std::result::Result<(), IntrinsicError> {
+        self.desired.insert(text(&key)?, lisp_to_json(&value));
+        Ok(())
+    }
+
+    fn observed(&mut self, key: LispValue, value: LispValue) -> std::result::Result<(), IntrinsicError> {
+        self.observed.insert(text(&key)?, lisp_to_json(&value));
+        Ok(())
+    }
+
+    fn condition(
+        &mut self,
+        name: LispValue,
+        status: LispValue,
+        reason: Option<LispValue>,
+        message: Option<LispValue>,
+    ) -> std::result::Result<(), IntrinsicError> {
+        let name = text(&name)?;
+        let status = match text(&status)?.as_str() {
+            "true" | "True" => ConditionStatus::True,
+            "false" | "False" => ConditionStatus::False,
+            "unknown" | "Unknown" => ConditionStatus::Unknown,
+            other => {
+                return Err(IntrinsicError::Invalid(format!(
+                    "status must be true|false|unknown, got {other:?}"
+                )))
             }
-            let kind = parse_kind(&lisp_string(&args[0], sp)?, sp, "vigy-emit")?;
-            let payload = if args.len() == 2 {
-                Some(lisp_to_json(&args[1]))
-            } else {
-                None
-            };
-            host.actions.push(ReconcileAction {
-                kind,
-                payload,
-                result: None,
-                message: None,
-            });
-            Ok(LispValue::Nil)
-        },
-    );
+        };
+        let reason = reason.as_ref().map(text).transpose()?;
+        let message = message.as_ref().map(text).transpose()?;
+        self.conditions.push(Condition {
+            name,
+            status,
+            reason,
+            message,
+            last_transition: time::OffsetDateTime::now_utc(),
+        });
+        Ok(())
+    }
 
-    // sugar — one per kind. Use the constructors on ReconcileAction
-    // so anything wired into the action shape stays consistent.
-    register_sugar(interp, "vigy-noop", Arity::Exact(0), |_, host| {
-        host.actions.push(ReconcileAction::noop());
-        Ok(LispValue::Nil)
-    });
-    register_sugar(interp, "vigy-defer", Arity::Exact(1), |args, host| {
-        host.actions
-            .push(ReconcileAction::defer(args[0].to_display_string()));
-        Ok(LispValue::Nil)
-    });
-    register_sugar(interp, "vigy-pull", Arity::Exact(1), |args, host| {
-        host.actions.push(ReconcileAction::pull(lisp_to_json(&args[0])));
-        Ok(LispValue::Nil)
-    });
-    register_sugar(interp, "vigy-push", Arity::Exact(1), |args, host| {
-        host.actions.push(ReconcileAction::push(lisp_to_json(&args[0])));
-        Ok(LispValue::Nil)
-    });
-    register_sugar(interp, "vigy-create", Arity::Exact(1), |args, host| {
-        host.actions
-            .push(ReconcileAction::create(lisp_to_json(&args[0])));
-        Ok(LispValue::Nil)
-    });
-    register_sugar(interp, "vigy-update", Arity::Exact(1), |args, host| {
-        host.actions
-            .push(ReconcileAction::update(lisp_to_json(&args[0])));
-        Ok(LispValue::Nil)
-    });
-    register_sugar(interp, "vigy-delete-action", Arity::Exact(1), |args, host| {
-        // Named with -action suffix so it doesn't collide with the kv
-        // intrinsic `vigy-del` (which removes a kv key). Programs that
-        // emit a delete reconcile action use this verb explicitly.
-        host.actions
-            .push(ReconcileAction::delete(lisp_to_json(&args[0])));
-        Ok(LispValue::Nil)
-    });
-    register_sugar(interp, "vigy-apply", Arity::Exact(1), |args, host| {
-        host.actions
-            .push(ReconcileAction::apply(lisp_to_json(&args[0])));
-        Ok(LispValue::Nil)
-    });
-    register_sugar(interp, "vigy-restart", Arity::Exact(1), |args, host| {
-        host.actions
-            .push(ReconcileAction::restart(lisp_to_json(&args[0])));
-        Ok(LispValue::Nil)
-    });
-}
+    fn get(
+        &mut self,
+        key: LispValue,
+        default: Option<LispValue>,
+    ) -> std::result::Result<LispValue, IntrinsicError> {
+        Ok(match self.kv.get(&text(&key)?) {
+            Some(v) => json_to_lisp(v),
+            None => default.unwrap_or(LispValue::Nil),
+        })
+    }
 
-// ─────────────────────────────────────────────────────────────────
-// Structured state
-// ─────────────────────────────────────────────────────────────────
+    fn set(&mut self, key: LispValue, value: LispValue) -> std::result::Result<(), IntrinsicError> {
+        let key = text(&key)?;
+        self.kv.insert(key.clone(), lisp_to_json(&value));
+        self.kv_dirty.insert(key.clone());
+        self.kv_deleted.remove(&key);
+        Ok(())
+    }
 
-fn install_state_intrinsics(interp: &mut Interpreter<VigyHost>) {
-    // (vigy-desired key value)
-    interp.register_fn(
-        "vigy-desired",
-        Arity::Exact(2),
-        |args: &[LispValue], host: &mut VigyHost, sp| {
-            let key = lisp_string(&args[0], sp)?;
-            host.desired.insert(key, lisp_to_json(&args[1]));
-            Ok(LispValue::Nil)
-        },
-    );
+    fn incr(
+        &mut self,
+        key: LispValue,
+        delta: Option<LispValue>,
+    ) -> std::result::Result<i64, IntrinsicError> {
+        let key = text(&key)?;
+        let delta = match delta {
+            Some(d) => int(&d, "integer delta")?,
+            None => 1,
+        };
+        let next = self
+            .kv
+            .get(&key)
+            .and_then(JsonValue::as_i64)
+            .unwrap_or(0)
+            .saturating_add(delta);
+        self.kv.insert(key.clone(), JsonValue::Number(next.into()));
+        self.kv_dirty.insert(key.clone());
+        self.kv_deleted.remove(&key);
+        Ok(next)
+    }
 
-    // (vigy-observed key value)
-    interp.register_fn(
-        "vigy-observed",
-        Arity::Exact(2),
-        |args: &[LispValue], host: &mut VigyHost, sp| {
-            let key = lisp_string(&args[0], sp)?;
-            host.observed.insert(key, lisp_to_json(&args[1]));
-            Ok(LispValue::Nil)
-        },
-    );
+    #[blue(name = "vigy_has?")]
+    fn has(&mut self, key: LispValue) -> std::result::Result<bool, IntrinsicError> {
+        Ok(self.kv.contains_key(&text(&key)?))
+    }
 
-    // (vigy-condition name status [reason [message]])
-    interp.register_fn(
-        "vigy-condition",
-        Arity::AtLeast(2),
-        |args: &[LispValue], host: &mut VigyHost, sp| {
-            if args.len() < 2 || args.len() > 4 {
-                return Err(EvalError::native_fn(
-                    "vigy-condition",
-                    format!("expected 2..4 args (name, status, reason?, message?), got {}", args.len()),
-                    sp,
-                ));
+    fn del(&mut self, key: LispValue) -> std::result::Result<bool, IntrinsicError> {
+        let key = text(&key)?;
+        let existed = self.kv.remove(&key).is_some();
+        self.kv_dirty.remove(&key);
+        self.kv_deleted.insert(key);
+        Ok(existed)
+    }
+
+    fn once(&mut self, key: LispValue) -> std::result::Result<bool, IntrinsicError> {
+        let key = format!("__once::{}", text(&key)?);
+        if self.kv.contains_key(&key) {
+            return Ok(false);
+        }
+        self.kv.insert(key.clone(), JsonValue::Bool(true));
+        self.kv_dirty.insert(key);
+        Ok(true)
+    }
+
+    fn mark_converged(&mut self, key: LispValue) -> std::result::Result<(), IntrinsicError> {
+        let key = format!("__converged::{}", text(&key)?);
+        self.kv.insert(
+            key.clone(),
+            JsonValue::String(
+                time::OffsetDateTime::now_utc()
+                    .format(&time::format_description::well_known::Rfc3339)
+                    .unwrap_or_default(),
+            ),
+        );
+        self.kv_dirty.insert(key);
+        Ok(())
+    }
+
+    #[blue(name = "vigy_converged?")]
+    fn converged(&mut self, key: LispValue) -> std::result::Result<bool, IntrinsicError> {
+        Ok(self
+            .kv
+            .contains_key(&format!("__converged::{}", text(&key)?)))
+    }
+
+    fn tick(&mut self) -> i64 {
+        self.tick_start_ms
+    }
+
+    fn tick_count(&mut self) -> i64 {
+        self.tick_count
+    }
+
+    fn since_last_tick(&mut self) -> i64 {
+        self.previous_tick_ms
+            .map(|p| self.tick_start_ms.saturating_sub(p))
+            .unwrap_or(-1)
+    }
+
+    #[blue(name = "vigy_rate_limited?")]
+    fn rate_limited(
+        &mut self,
+        key: LispValue,
+        min_interval_ms: LispValue,
+    ) -> std::result::Result<bool, IntrinsicError> {
+        let key = format!("__ratelimit::{}", text(&key)?);
+        let min_ms = int(&min_interval_ms, "integer min-interval-ms")?;
+        let last = self.kv.get(&key).and_then(JsonValue::as_i64).unwrap_or(0);
+        if self.tick_start_ms.saturating_sub(last) < min_ms {
+            return Ok(true);
+        }
+        self.kv
+            .insert(key.clone(), JsonValue::Number(self.tick_start_ms.into()));
+        self.kv_dirty.insert(key);
+        Ok(false)
+    }
+
+    fn backoff_ms(&mut self, attempt: LispValue) -> std::result::Result<i64, IntrinsicError> {
+        let attempt = u32::try_from(int(&attempt, "integer attempt")?.max(0)).unwrap_or(u32::MAX);
+        let secs = 1u64.checked_shl(attempt.min(5)).unwrap_or(30);
+        Ok(i64::try_from(secs.min(30) * 1000).unwrap_or(30_000))
+    }
+
+    fn log(&mut self, level: LispValue, message: LispValue) -> std::result::Result<(), IntrinsicError> {
+        let level_str = text(&level)?;
+        let level = LogLevel::parse(&level_str).ok_or_else(|| {
+            IntrinsicError::Invalid(format!(
+                "unknown level {level_str:?}; expected trace|debug|info|warn|error"
+            ))
+        })?;
+        let message = text(&message)?;
+        self.log.push(LogEntry { level, message });
+        Ok(())
+    }
+
+    fn trace(&mut self, key: LispValue, value: LispValue) -> std::result::Result<(), IntrinsicError> {
+        self.trace.insert(text(&key)?, lisp_to_json(&value));
+        Ok(())
+    }
+
+    fn metric(&mut self, name: LispValue, value: LispValue) -> std::result::Result<(), IntrinsicError> {
+        let name = text(&name)?;
+        let value = match &value {
+            LispValue::Int(n) => *n as f64,
+            LispValue::Float(n) => *n,
+            other => {
+                return Err(IntrinsicError::Type {
+                    expected: "numeric metric value",
+                    got: other.type_name(),
+                })
             }
-            let name = lisp_string(&args[0], sp)?;
-            let status_str = lisp_string(&args[1], sp)?;
-            let status = match status_str.as_str() {
-                "true" | "True" => ConditionStatus::True,
-                "false" | "False" => ConditionStatus::False,
-                "unknown" | "Unknown" => ConditionStatus::Unknown,
-                other => {
-                    return Err(EvalError::native_fn(
-                        "vigy-condition",
-                        format!("status must be true|false|unknown, got {other:?}"),
-                        sp,
-                    ));
-                }
-            };
-            let reason = if args.len() >= 3 {
-                Some(lisp_string(&args[2], sp)?)
-            } else {
-                None
-            };
-            let message = if args.len() >= 4 {
-                Some(lisp_string(&args[3], sp)?)
-            } else {
-                None
-            };
-            host.conditions.push(Condition {
-                name,
-                status,
-                reason,
-                message,
-                last_transition: time::OffsetDateTime::now_utc(),
-            });
-            Ok(LispValue::Nil)
-        },
-    );
+        };
+        self.metrics.insert(name, value);
+        Ok(())
+    }
+
+    fn event(&mut self, kind: LispValue, message: LispValue) -> std::result::Result<(), IntrinsicError> {
+        let kind = text(&kind)?;
+        let message = text(&message)?;
+        self.events.push(HostEvent { kind, message });
+        Ok(())
+    }
 }
 
-// ─────────────────────────────────────────────────────────────────
-// Persistent KV
-// ─────────────────────────────────────────────────────────────────
+type Run = fn(&mut VigyHost, &[LispValue]) -> std::result::Result<LispValue, IntrinsicError>;
 
-fn install_kv_intrinsics(interp: &mut Interpreter<VigyHost>) {
-    // (vigy-get key default?)
-    interp.register_fn(
-        "vigy-get",
-        Arity::AtLeast(1),
-        |args: &[LispValue], host: &mut VigyHost, sp| {
-            let key = lisp_string(&args[0], sp)?;
-            match host.kv.get(&key).cloned() {
-                Some(v) => Ok(json_to_lisp(&v)),
-                None if args.len() == 2 => Ok(args[1].clone()),
-                None => Ok(LispValue::Nil),
-            }
-        },
-    );
-
-    // (vigy-set key value)
-    interp.register_fn(
-        "vigy-set",
-        Arity::Exact(2),
-        |args: &[LispValue], host: &mut VigyHost, sp| {
-            let key = lisp_string(&args[0], sp)?;
-            let value = lisp_to_json(&args[1]);
-            host.kv.insert(key.clone(), value);
-            host.kv_dirty.insert(key.clone());
-            host.kv_deleted.remove(&key);
-            Ok(LispValue::Nil)
-        },
-    );
-
-    // (vigy-incr key delta?) — defaults delta to 1.
-    interp.register_fn(
-        "vigy-incr",
-        Arity::AtLeast(1),
-        |args: &[LispValue], host: &mut VigyHost, sp| {
-            let key = lisp_string(&args[0], sp)?;
-            let delta = if args.len() >= 2 {
-                match &args[1] {
-                    LispValue::Int(n) => *n,
-                    other => {
-                        return Err(EvalError::type_mismatch(
-                            "integer delta",
-                            other.type_name(),
-                            sp,
-                        ))
-                    }
-                }
-            } else {
-                1
-            };
-            let current = host
-                .kv
-                .get(&key)
-                .and_then(|v| v.as_i64())
-                .unwrap_or(0);
-            let next = current.saturating_add(delta);
-            host.kv
-                .insert(key.clone(), JsonValue::Number(next.into()));
-            host.kv_dirty.insert(key.clone());
-            host.kv_deleted.remove(&key);
-            Ok(LispValue::Int(next))
-        },
-    );
-
-    // (vigy-has? key)
-    interp.register_fn(
-        "vigy-has?",
-        Arity::Exact(1),
-        |args: &[LispValue], host: &mut VigyHost, sp| {
-            let key = lisp_string(&args[0], sp)?;
-            Ok(LispValue::Bool(host.kv.contains_key(&key)))
-        },
-    );
-
-    // (vigy-del key)
-    interp.register_fn(
-        "vigy-del",
-        Arity::Exact(1),
-        |args: &[LispValue], host: &mut VigyHost, sp| {
-            let key = lisp_string(&args[0], sp)?;
-            let existed = host.kv.remove(&key).is_some();
-            host.kv_dirty.remove(&key);
-            host.kv_deleted.insert(key);
-            Ok(LispValue::Bool(existed))
-        },
-    );
+#[derive(Clone, Copy)]
+struct TataraIntrinsic {
+    name: &'static str,
+    arity: Arity,
+    run: Run,
 }
 
-// ─────────────────────────────────────────────────────────────────
-// Convergence / idempotency
-// ─────────────────────────────────────────────────────────────────
-
-fn install_convergence_intrinsics(interp: &mut Interpreter<VigyHost>) {
-    // (vigy-once key) — true exactly once across the vigy's lifetime.
-    // Internally: checks if "__once::<key>" is set in kv; sets it if not.
-    interp.register_fn(
-        "vigy-once",
-        Arity::Exact(1),
-        |args: &[LispValue], host: &mut VigyHost, sp| {
-            let key = format!("__once::{}", lisp_string(&args[0], sp)?);
-            if host.kv.contains_key(&key) {
-                Ok(LispValue::Bool(false))
-            } else {
-                host.kv.insert(key.clone(), JsonValue::Bool(true));
-                host.kv_dirty.insert(key);
-                Ok(LispValue::Bool(true))
-            }
-        },
-    );
-
-    // (vigy-mark-converged key) — record permanent achievement.
-    interp.register_fn(
-        "vigy-mark-converged",
-        Arity::Exact(1),
-        |args: &[LispValue], host: &mut VigyHost, sp| {
-            let key = format!("__converged::{}", lisp_string(&args[0], sp)?);
-            host.kv.insert(
-                key.clone(),
-                JsonValue::String(
-                    time::OffsetDateTime::now_utc()
-                        .format(&time::format_description::well_known::Rfc3339)
-                        .unwrap_or_default(),
-                ),
-            );
-            host.kv_dirty.insert(key);
-            Ok(LispValue::Nil)
-        },
-    );
-
-    // (vigy-converged? key)
-    interp.register_fn(
-        "vigy-converged?",
-        Arity::Exact(1),
-        |args: &[LispValue], host: &mut VigyHost, sp| {
-            let key = format!("__converged::{}", lisp_string(&args[0], sp)?);
-            Ok(LispValue::Bool(host.kv.contains_key(&key)))
-        },
-    );
+const fn row(name: &'static str, arity: Arity, run: Run) -> TataraIntrinsic {
+    TataraIntrinsic { name, arity, run }
 }
 
-// ─────────────────────────────────────────────────────────────────
-// Scheduling helpers
-// ─────────────────────────────────────────────────────────────────
-
-fn install_scheduling_intrinsics(interp: &mut Interpreter<VigyHost>) {
-    // (vigy-tick) — current tick's epoch ms.
-    interp.register_fn(
-        "vigy-tick",
-        Arity::Exact(0),
-        |_args: &[LispValue], host: &mut VigyHost, _sp| Ok(LispValue::Int(host.tick_start_ms)),
-    );
-
-    // (vigy-tick-count) — Nth tick for this vigy.
-    interp.register_fn(
-        "vigy-tick-count",
-        Arity::Exact(0),
-        |_args: &[LispValue], host: &mut VigyHost, _sp| Ok(LispValue::Int(host.tick_count)),
-    );
-
-    // (vigy-since-last-tick) — ms since previous tick. -1 if first tick.
-    interp.register_fn(
-        "vigy-since-last-tick",
-        Arity::Exact(0),
-        |_args: &[LispValue], host: &mut VigyHost, _sp| {
-            let v = host
-                .previous_tick_ms
-                .map(|p| host.tick_start_ms.saturating_sub(p))
-                .unwrap_or(-1);
-            Ok(LispValue::Int(v))
-        },
-    );
-
-    // (vigy-rate-limited? key min-interval-ms) — returns true if `key`
-    // has been recorded as acted-on within the last min-interval-ms.
-    // Side-effect on false: records the current tick under key so the
-    // next call gates correctly. Pattern: gate the body of an action,
-    // not the observe step.
-    interp.register_fn(
-        "vigy-rate-limited?",
-        Arity::Exact(2),
-        |args: &[LispValue], host: &mut VigyHost, sp| {
-            let key = format!("__ratelimit::{}", lisp_string(&args[0], sp)?);
-            let min_ms = match &args[1] {
-                LispValue::Int(n) => *n,
-                other => {
-                    return Err(EvalError::type_mismatch(
-                        "integer min-interval-ms",
-                        other.type_name(),
-                        sp,
-                    ))
-                }
-            };
-            let last = host.kv.get(&key).and_then(|v| v.as_i64()).unwrap_or(0);
-            let elapsed = host.tick_start_ms.saturating_sub(last);
-            if elapsed < min_ms {
-                Ok(LispValue::Bool(true))
-            } else {
-                host.kv
-                    .insert(key.clone(), JsonValue::Number(host.tick_start_ms.into()));
-                host.kv_dirty.insert(key);
-                Ok(LispValue::Bool(false))
-            }
-        },
-    );
-
-    // (vigy-backoff-ms attempt) — capped exponential backoff.
-    //   attempt 0 → 1000ms, 1 → 2000, 2 → 4000, ..., capped at 30000.
-    interp.register_fn(
-        "vigy-backoff-ms",
-        Arity::Exact(1),
-        |args: &[LispValue], _host: &mut VigyHost, sp| {
-            let attempt = match &args[0] {
-                LispValue::Int(n) => (*n).max(0) as u32,
-                other => {
-                    return Err(EvalError::type_mismatch(
-                        "integer attempt",
-                        other.type_name(),
-                        sp,
-                    ))
-                }
-            };
-            let secs = 1u64
-                .checked_shl(attempt.min(5))
-                .unwrap_or(30);
-            let ms = (secs.min(30) * 1000) as i64;
-            Ok(LispValue::Int(ms))
-        },
-    );
+fn nil(r: Unit) -> std::result::Result<LispValue, IntrinsicError> {
+    r.map(|()| LispValue::Nil)
 }
 
-// ─────────────────────────────────────────────────────────────────
-// Diagnostics
-// ─────────────────────────────────────────────────────────────────
-
-fn install_diagnostic_intrinsics(interp: &mut Interpreter<VigyHost>) {
-    // (vigy-log level message)
-    interp.register_fn(
-        "vigy-log",
-        Arity::Exact(2),
-        |args: &[LispValue], host: &mut VigyHost, sp| {
-            let level_str = lisp_string(&args[0], sp)?;
-            let level = LogLevel::parse(&level_str).ok_or_else(|| {
-                EvalError::native_fn(
-                    "vigy-log",
-                    format!("unknown level {level_str:?}; expected trace|debug|info|warn|error"),
-                    sp,
-                )
-            })?;
-            let message = lisp_string(&args[1], sp)?;
-            host.log.push(LogEntry { level, message });
-            Ok(LispValue::Nil)
-        },
-    );
-
-    // (vigy-trace key value)
-    interp.register_fn(
-        "vigy-trace",
-        Arity::Exact(2),
-        |args: &[LispValue], host: &mut VigyHost, sp| {
-            let key = lisp_string(&args[0], sp)?;
-            host.trace.insert(key, lisp_to_json(&args[1]));
-            Ok(LispValue::Nil)
-        },
-    );
-
-    // (vigy-metric name value) — value is float-coerced from int/float.
-    interp.register_fn(
-        "vigy-metric",
-        Arity::Exact(2),
-        |args: &[LispValue], host: &mut VigyHost, sp| {
-            let name = lisp_string(&args[0], sp)?;
-            let value = match &args[1] {
-                LispValue::Int(n) => *n as f64,
-                LispValue::Float(n) => *n,
-                other => {
-                    return Err(EvalError::type_mismatch(
-                        "numeric metric value",
-                        other.type_name(),
-                        sp,
-                    ))
-                }
-            };
-            host.metrics.insert(name, value);
-            Ok(LispValue::Nil)
-        },
-    );
-
-    // (vigy-event kind message)
-    interp.register_fn(
-        "vigy-event",
-        Arity::Exact(2),
-        |args: &[LispValue], host: &mut VigyHost, sp| {
-            let kind = lisp_string(&args[0], sp)?;
-            let message = lisp_string(&args[1], sp)?;
-            host.events.push(HostEvent { kind, message });
-            Ok(LispValue::Nil)
-        },
-    );
+fn value<T: IntoValue>(
+    r: std::result::Result<T, IntrinsicError>,
+) -> std::result::Result<LispValue, IntrinsicError> {
+    r.map(IntoValue::into_value)
 }
 
-// ─────────────────────────────────────────────────────────────────
-// Helpers
-// ─────────────────────────────────────────────────────────────────
-
-fn register_sugar<F>(interp: &mut Interpreter<VigyHost>, name: &'static str, arity: Arity, f: F)
-where
-    F: Fn(&[LispValue], &mut VigyHost) -> std::result::Result<LispValue, EvalError>
-        + Send
-        + Sync
-        + 'static,
-{
-    interp.register_fn(name, arity, move |args: &[LispValue], host: &mut VigyHost, _sp| {
-        f(args, host)
-    });
+fn at_most(args: &[LispValue], max: usize, shape: &str) -> std::result::Result<(), IntrinsicError> {
+    if args.len() > max {
+        return Err(IntrinsicError::Invalid(format!(
+            "expected {shape}, got {}",
+            args.len()
+        )));
+    }
+    Ok(())
 }
 
-fn parse_kind(
-    s: &str,
-    sp: tatara_lisp::Span,
-    fn_name: &'static str,
-) -> std::result::Result<ReconcileKind, EvalError> {
+const ACTIONS: &[TataraIntrinsic] = &[
+    row("vigy-emit", Arity::AtLeast(1), |h, a| {
+        at_most(a, 2, "1 or 2 args (kind, payload?)")?;
+        nil(h.emit(a[0].clone(), a.get(1).cloned()))
+    }),
+    row("vigy-noop", Arity::Exact(0), |h, _| {
+        h.noop();
+        Ok(LispValue::Nil)
+    }),
+    row("vigy-defer", Arity::Exact(1), |h, a| {
+        h.defer(a[0].clone());
+        Ok(LispValue::Nil)
+    }),
+    row("vigy-pull", Arity::Exact(1), |h, a| {
+        h.pull(a[0].clone());
+        Ok(LispValue::Nil)
+    }),
+    row("vigy-push", Arity::Exact(1), |h, a| {
+        h.push(a[0].clone());
+        Ok(LispValue::Nil)
+    }),
+    row("vigy-create", Arity::Exact(1), |h, a| {
+        h.create(a[0].clone());
+        Ok(LispValue::Nil)
+    }),
+    row("vigy-update", Arity::Exact(1), |h, a| {
+        h.update(a[0].clone());
+        Ok(LispValue::Nil)
+    }),
+    row("vigy-delete-action", Arity::Exact(1), |h, a| {
+        h.delete_action(a[0].clone());
+        Ok(LispValue::Nil)
+    }),
+    row("vigy-apply", Arity::Exact(1), |h, a| {
+        h.apply(a[0].clone());
+        Ok(LispValue::Nil)
+    }),
+    row("vigy-restart", Arity::Exact(1), |h, a| {
+        h.restart(a[0].clone());
+        Ok(LispValue::Nil)
+    }),
+];
+
+const STATE: &[TataraIntrinsic] = &[
+    row("vigy-desired", Arity::Exact(2), |h, a| {
+        nil(h.desired(a[0].clone(), a[1].clone()))
+    }),
+    row("vigy-observed", Arity::Exact(2), |h, a| {
+        nil(h.observed(a[0].clone(), a[1].clone()))
+    }),
+    row("vigy-condition", Arity::AtLeast(2), |h, a| {
+        at_most(a, 4, "2..4 args (name, status, reason?, message?)")?;
+        nil(h.condition(
+            a[0].clone(),
+            a[1].clone(),
+            a.get(2).cloned(),
+            a.get(3).cloned(),
+        ))
+    }),
+];
+
+const KV: &[TataraIntrinsic] = &[
+    row("vigy-get", Arity::AtLeast(1), |h, a| {
+        h.get(a[0].clone(), a.get(1).cloned())
+    }),
+    row("vigy-set", Arity::Exact(2), |h, a| {
+        nil(h.set(a[0].clone(), a[1].clone()))
+    }),
+    row("vigy-incr", Arity::AtLeast(1), |h, a| {
+        value(h.incr(a[0].clone(), a.get(1).cloned()))
+    }),
+    row("vigy-has?", Arity::Exact(1), |h, a| value(h.has(a[0].clone()))),
+    row("vigy-del", Arity::Exact(1), |h, a| value(h.del(a[0].clone()))),
+];
+
+const CONVERGENCE: &[TataraIntrinsic] = &[
+    row("vigy-once", Arity::Exact(1), |h, a| value(h.once(a[0].clone()))),
+    row("vigy-mark-converged", Arity::Exact(1), |h, a| {
+        nil(h.mark_converged(a[0].clone()))
+    }),
+    row("vigy-converged?", Arity::Exact(1), |h, a| {
+        value(h.converged(a[0].clone()))
+    }),
+];
+
+const SCHEDULING: &[TataraIntrinsic] = &[
+    row("vigy-tick", Arity::Exact(0), |h, _| Ok(LispValue::Int(h.tick()))),
+    row("vigy-tick-count", Arity::Exact(0), |h, _| {
+        Ok(LispValue::Int(h.tick_count()))
+    }),
+    row("vigy-since-last-tick", Arity::Exact(0), |h, _| {
+        Ok(LispValue::Int(h.since_last_tick()))
+    }),
+    row("vigy-rate-limited?", Arity::Exact(2), |h, a| {
+        value(h.rate_limited(a[0].clone(), a[1].clone()))
+    }),
+    row("vigy-backoff-ms", Arity::Exact(1), |h, a| {
+        value(h.backoff_ms(a[0].clone()))
+    }),
+];
+
+const DIAGNOSTICS: &[TataraIntrinsic] = &[
+    row("vigy-log", Arity::Exact(2), |h, a| {
+        nil(h.log(a[0].clone(), a[1].clone()))
+    }),
+    row("vigy-trace", Arity::Exact(2), |h, a| {
+        nil(h.trace(a[0].clone(), a[1].clone()))
+    }),
+    row("vigy-metric", Arity::Exact(2), |h, a| {
+        nil(h.metric(a[0].clone(), a[1].clone()))
+    }),
+    row("vigy-event", Arity::Exact(2), |h, a| {
+        nil(h.event(a[0].clone(), a[1].clone()))
+    }),
+];
+
+const TATARA: [&[TataraIntrinsic]; 6] = [ACTIONS, STATE, KV, CONVERGENCE, SCHEDULING, DIAGNOSTICS];
+
+fn install_rows(interp: &mut Interpreter<VigyHost>, rows: &[TataraIntrinsic]) {
+    for &TataraIntrinsic { name, arity, run } in rows {
+        interp.register_fn(
+            name,
+            arity,
+            move |args: &[LispValue], host: &mut VigyHost, sp: Span| {
+                run(host, args).map_err(|e| e.at(name, sp))
+            },
+        );
+    }
+}
+
+fn parse_kind(s: &str) -> std::result::Result<ReconcileKind, IntrinsicError> {
     match s {
         "noop" => Ok(ReconcileKind::Noop),
         "defer" => Ok(ReconcileKind::Defer),
@@ -867,87 +836,66 @@ fn parse_kind(
         "apply" => Ok(ReconcileKind::Apply),
         "restart" => Ok(ReconcileKind::Restart),
         "custom" => Ok(ReconcileKind::Custom),
-        other => Err(EvalError::native_fn(
-            fn_name,
-            format!(
-                "unknown kind {other:?}; expected noop|defer|pull|push|create|update|delete|apply|restart|custom"
-            ),
-            sp,
-        )),
+        other => Err(IntrinsicError::Invalid(format!(
+            "unknown kind {other:?}; expected noop|defer|pull|push|create|update|delete|apply|restart|custom"
+        ))),
     }
 }
 
-// ─────────────────────────────────────────────────────────────────
-// Standard HostExtension impls — each delegates to its free install
-// function. Trivial unit structs so consumers can compose them by
-// reference (`standard_extensions()`) or by name in their own bundles.
-// ─────────────────────────────────────────────────────────────────
-
-/// Typed action verbs: vigy-noop / defer / pull / push / create /
-/// update / delete-action / apply / restart / emit.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ActionsExtension;
 impl HostExtension for ActionsExtension {
     fn install(&self, interp: &mut Interpreter<VigyHost>) {
-        install_action_intrinsics(interp);
+        install_rows(interp, ACTIONS);
     }
+    fn install_blue(&self, _: &mut Interpreter<VigyHost>) {}
 }
 
-/// Structured state: vigy-desired / observed / condition.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct StateExtension;
 impl HostExtension for StateExtension {
     fn install(&self, interp: &mut Interpreter<VigyHost>) {
-        install_state_intrinsics(interp);
+        install_rows(interp, STATE);
     }
+    fn install_blue(&self, _: &mut Interpreter<VigyHost>) {}
 }
 
-/// Persistent KV: vigy-get / set / incr / has? / del.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct KvExtension;
 impl HostExtension for KvExtension {
     fn install(&self, interp: &mut Interpreter<VigyHost>) {
-        install_kv_intrinsics(interp);
+        install_rows(interp, KV);
     }
+    fn install_blue(&self, _: &mut Interpreter<VigyHost>) {}
 }
 
-/// Convergence: vigy-once / mark-converged / converged?.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ConvergenceExtension;
 impl HostExtension for ConvergenceExtension {
     fn install(&self, interp: &mut Interpreter<VigyHost>) {
-        install_convergence_intrinsics(interp);
+        install_rows(interp, CONVERGENCE);
     }
+    fn install_blue(&self, _: &mut Interpreter<VigyHost>) {}
 }
 
-/// Scheduling: vigy-tick / tick-count / since-last-tick /
-/// rate-limited? / backoff-ms.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SchedulingExtension;
 impl HostExtension for SchedulingExtension {
     fn install(&self, interp: &mut Interpreter<VigyHost>) {
-        install_scheduling_intrinsics(interp);
+        install_rows(interp, SCHEDULING);
     }
+    fn install_blue(&self, _: &mut Interpreter<VigyHost>) {}
 }
 
-/// Diagnostics: vigy-log / trace / metric / event.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct DiagnosticsExtension;
 impl HostExtension for DiagnosticsExtension {
     fn install(&self, interp: &mut Interpreter<VigyHost>) {
-        install_diagnostic_intrinsics(interp);
+        install_rows(interp, DIAGNOSTICS);
     }
+    fn install_blue(&self, _: &mut Interpreter<VigyHost>) {}
 }
 
-/// Construct a HostExtension from a closure. Useful for one-off
-/// host-specific intrinsics that don't deserve their own named struct:
-///
-/// ```ignore
-/// let mado_ext = closure_extension(|interp| {
-///     interp.register_fn("mado-tear-list-sessions", Arity::Exact(0),
-///         |_args, host, _sp| { /* ... */ });
-/// });
-/// ```
 pub fn closure_extension<F>(f: F) -> ExtensionHandle
 where
     F: Fn(&mut Interpreter<VigyHost>) + Send + Sync + 'static,
@@ -963,20 +911,94 @@ where
     std::sync::Arc::new(ClosureExtension(f))
 }
 
+fn hosted_frame(name: &str) -> bool {
+    static REFUSED: std::sync::OnceLock<std::collections::BTreeSet<&'static str>> =
+        std::sync::OnceLock::new();
+    !REFUSED
+        .get_or_init(|| host_effect_names().into_iter().collect())
+        .contains(name)
+}
+
+pub fn evaluate_blue(
+    program: &str,
+    mut host: VigyHost,
+    extensions: &[ExtensionHandle],
+) -> Result<VigyHost> {
+    let mut load = Program::<VigyHost>::builder(Entry::anonymous(program));
+    for ext in extensions {
+        load = load.extend(move |interp: &mut Interpreter<VigyHost>| ext.install_blue(interp));
+    }
+    load.frame(&hosted_frame, Budget::tree_walker_default())
+        .load(&mut host)
+        ?;
+    Ok(host)
+}
+
+pub fn evaluate_in(
+    language: Language,
+    program: &str,
+    host: VigyHost,
+    extensions: &[ExtensionHandle],
+) -> Result<VigyHost> {
+    match language {
+        Language::TataraLisp => evaluate_with_extensions(program, host, extensions),
+        Language::Blue => evaluate_blue(program, host, extensions),
+    }
+}
+
+pub struct ProgramReconciler {
+    pub language: Language,
+    pub program: String,
+    pub extensions: Vec<ExtensionHandle>,
+}
+
+impl ProgramReconciler {
+    pub fn new(
+        language: Language,
+        program: impl Into<String>,
+        extensions: Vec<ExtensionHandle>,
+    ) -> Self {
+        Self {
+            language,
+            program: program.into(),
+            extensions,
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl Reconciler for ProgramReconciler {
+    async fn tick(&self, host: VigyHost) -> Result<VigyHost> {
+        let language = self.language;
+        let program = self.program.clone();
+        let extensions = self.extensions.clone();
+        tokio::task::spawn_blocking(move || evaluate_in(language, &program, host, &extensions))
+            .await
+            .map_err(|e| EvalErr::Eval(format!("join: {e}")))?
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────
 
-fn lisp_string(v: &LispValue, sp: tatara_lisp::Span) -> std::result::Result<String, EvalError> {
+fn text(v: &LispValue) -> std::result::Result<String, IntrinsicError> {
     match v {
-        LispValue::Str(s) => Ok(s.to_string()),
-        LispValue::Symbol(s) => Ok(s.to_string()),
-        LispValue::Keyword(s) => Ok(s.to_string()),
-        other => Err(EvalError::type_mismatch(
-            "string|symbol|keyword",
-            other.type_name(),
-            sp,
-        )),
+        LispValue::Str(s) | LispValue::Symbol(s) | LispValue::Keyword(s) => Ok(s.to_string()),
+        other => Err(IntrinsicError::Type {
+            expected: "string|symbol|keyword",
+            got: other.type_name(),
+        }),
+    }
+}
+
+fn int(v: &LispValue, expected: &'static str) -> std::result::Result<i64, IntrinsicError> {
+    match v {
+        LispValue::Int(n) => Ok(*n),
+        other => Err(IntrinsicError::Type {
+            expected,
+            got: other.type_name(),
+        }),
     }
 }
 
@@ -1408,5 +1430,231 @@ mod tests {
         assert!((h.metrics.get("lag_ratio").unwrap() - 0.42).abs() < 1e-9);
         assert_eq!(h.events.len(), 1);
         assert_eq!(h.events[0].kind, "Reconciled");
+    }
+
+    fn blue(program: &str, host: VigyHost) -> VigyHost {
+        evaluate_in(Language::Blue, program, host, &standard_extensions()).unwrap()
+    }
+
+    fn blue_err(program: &str) -> String {
+        evaluate_in(Language::Blue, program, VigyHost::default(), &standard_extensions())
+            .unwrap_err()
+            .to_string()
+    }
+
+    #[test]
+    fn a_blue_vigy_emits_desires_conditions_logs_and_keeps_kv() {
+        let mut host = VigyHost::default();
+        host.kv.insert("attempts".into(), JsonValue::Number(7.into()));
+        let h = blue(
+            r#"vigy_emit("custom", {"from" => "blue"})
+vigy_emit("noop")
+vigy_delete_action("session-w")
+vigy_desired("replica_count", 3)
+vigy_observed("replica_count", 2)
+vigy_condition("Ready", "false", "BackoffActive", "1 replica unhealthy")
+vigy_condition("InSync", "true")
+vigy_set("doubled", 2 * vigy_get("attempts"))
+vigy_set("fallback", vigy_get("missing", 42))
+vigy_set("absent", vigy_get("missing"))
+vigy_incr("n")
+vigy_incr("n", 4)
+vigy_set("had_n", vigy_has?("n"))
+vigy_del("attempts")
+vigy_log("warn", "careful")
+vigy_trace("upstream", "abc")
+vigy_metric("lag", 0.5)
+vigy_event("Reconciled", "all good")
+vigy_set("first", vigy_once("init"))
+vigy_mark_converged("target")
+vigy_set("converged", vigy_converged?("target"))
+vigy_set("backoff", vigy_backoff_ms(3))
+"#,
+            host,
+        );
+        let kinds: Vec<_> = h.actions.iter().map(|a| a.kind).collect();
+        assert_eq!(
+            kinds,
+            [ReconcileKind::Custom, ReconcileKind::Noop, ReconcileKind::Delete]
+        );
+        assert_eq!(h.actions[0].payload, Some(serde_json::json!({"from": "blue"})));
+        assert_eq!(h.actions[1].payload, None);
+        assert_eq!(h.desired.get("replica_count").and_then(JsonValue::as_i64), Some(3));
+        assert_eq!(h.observed.get("replica_count").and_then(JsonValue::as_i64), Some(2));
+        assert_eq!(h.conditions.len(), 2);
+        assert_eq!(h.conditions[0].reason.as_deref(), Some("BackoffActive"));
+        assert_eq!(h.conditions[0].message.as_deref(), Some("1 replica unhealthy"));
+        assert_eq!(h.conditions[1].status, ConditionStatus::True);
+        assert_eq!(h.conditions[1].reason, None);
+        assert_eq!(h.kv.get("doubled").and_then(JsonValue::as_i64), Some(14));
+        assert_eq!(h.kv.get("fallback").and_then(JsonValue::as_i64), Some(42));
+        assert_eq!(h.kv.get("absent"), Some(&JsonValue::Null));
+        assert_eq!(h.kv.get("n").and_then(JsonValue::as_i64), Some(5));
+        assert_eq!(h.kv.get("had_n"), Some(&JsonValue::Bool(true)));
+        assert!(h.kv_deleted.contains("attempts"));
+        assert_eq!(h.log.len(), 1);
+        assert_eq!(h.log[0].level, LogLevel::Warn);
+        assert_eq!(h.trace.get("upstream").and_then(JsonValue::as_str), Some("abc"));
+        assert_eq!(h.metrics.get("lag"), Some(&0.5));
+        assert_eq!(h.events[0].kind, "Reconciled");
+        assert_eq!(h.kv.get("first"), Some(&JsonValue::Bool(true)));
+        assert_eq!(h.kv.get("converged"), Some(&JsonValue::Bool(true)));
+        assert_eq!(h.kv.get("backoff").and_then(JsonValue::as_i64), Some(8000));
+    }
+
+    #[test]
+    fn a_blue_vigy_reads_tick_metadata_and_rate_limits() {
+        let host = VigyHost {
+            tick_start_ms: 1000,
+            previous_tick_ms: Some(800),
+            tick_count: 7,
+            ..VigyHost::default()
+        };
+        let program = "vigy_set(\"since\", vigy_since_last_tick())\nvigy_set(\"count\", vigy_tick_count())\nvigy_set(\"tick\", vigy_tick())\nvigy_set(\"limited\", vigy_rate_limited?(\"k\", 500))\n";
+        let h = blue(program, host);
+        assert_eq!(h.kv.get("since").and_then(JsonValue::as_i64), Some(200));
+        assert_eq!(h.kv.get("count").and_then(JsonValue::as_i64), Some(7));
+        assert_eq!(h.kv.get("tick").and_then(JsonValue::as_i64), Some(1000));
+        assert_eq!(h.kv.get("limited"), Some(&JsonValue::Bool(false)));
+        let mut next = h;
+        next.tick_start_ms = 1300;
+        let h2 = blue(program, next);
+        assert_eq!(h2.kv.get("limited"), Some(&JsonValue::Bool(true)));
+    }
+
+    #[test]
+    fn a_blue_vigy_that_breaks_an_intrinsic_contract_is_an_error_naming_it() {
+        let err = blue_err("vigy_emit(\"sideways\")\n");
+        assert!(err.contains("vigy_emit") && err.contains("unknown kind"), "{err}");
+        let err = blue_err("vigy_condition(\"Ready\", \"maybe\")\n");
+        assert!(err.contains("vigy_condition") && err.contains("true|false|unknown"), "{err}");
+        let err = blue_err("vigy_incr(\"n\", \"one\")\n");
+        assert!(err.contains("vigy_incr") && err.contains("integer delta"), "{err}");
+        let err = blue_err("vigy_emit()\n");
+        assert!(err.contains("vigy_emit"), "{err}");
+    }
+
+    #[test]
+    fn a_tatara_name_is_not_a_blue_name() {
+        let err = evaluate_in(Language::Blue, "(vigy-noop)\n", VigyHost::default(), &[]);
+        assert!(matches!(err, Err(EvalErr::Blue(_))), "{err:?}");
+    }
+
+    #[test]
+    fn a_blue_vigy_naming_a_host_effect_is_refused_before_it_runs() {
+        let effect = host_effect_names()
+            .into_iter()
+            .find(|n| !n.contains('-'))
+            .expect("a host effect blue can name");
+        let err = blue_err(&format!("vigy_noop()\n{effect}(\"x\")\n"));
+        assert!(err.contains(effect), "{err}");
+    }
+
+    #[test]
+    fn a_host_extension_reaches_blue_vigies_through_its_blue_install() {
+        let custom = closure_extension(|interp| {
+            interp.register_fn(
+                "mado_sessions",
+                Arity::Exact(0),
+                |_args: &[LispValue], host: &mut VigyHost, _sp| {
+                    host.actions
+                        .push(ReconcileAction::custom(serde_json::json!({"from": "mado"})));
+                    Ok(LispValue::Int(3))
+                },
+            );
+        });
+        let mut extensions = standard_extensions();
+        extensions.push(custom);
+        let h = evaluate_in(
+            Language::Blue,
+            "vigy_set(\"sessions\", mado_sessions())\n",
+            VigyHost::default(),
+            &extensions,
+        )
+        .unwrap();
+        assert_eq!(h.kv.get("sessions").and_then(JsonValue::as_i64), Some(3));
+        assert_eq!(h.actions[0].kind, ReconcileKind::Custom);
+    }
+
+    #[tokio::test]
+    async fn a_tatara_vigy_under_the_default_language_runs_exactly_as_before() {
+        let tick = || VigyHost {
+            tick_start_ms: 5000,
+            tick_count: 10,
+            ..VigyHost::default()
+        };
+        let broken = include_str!("../../../examples/tear-mirror.tatara");
+        let before = LispReconciler::standard(broken).tick(tick()).await.unwrap_err();
+        let now = ProgramReconciler::new(Language::default(), broken, standard_extensions())
+            .tick(tick())
+            .await
+            .unwrap_err();
+        assert_eq!(now.to_string(), before.to_string());
+        for program in [
+            include_str!("../../../examples/hello-vigy.tatara"),
+            r#"
+            (vigy-log "info" "tick")
+            (if (vigy-once "init") (vigy-set "seeded" 0) (vigy-log "debug" "again"))
+            (if (vigy-rate-limited? "work" 2000)
+                (vigy-defer "rate-limited")
+                (let ((n (vigy-get "seeded" 0)))
+                  (vigy-observed "count" n)
+                  (vigy-desired "count" (+ n 1))
+                  (vigy-incr "seeded")
+                  (vigy-pull "upstream")
+                  (vigy-condition "Ready" "true" "InSync" "fine")))
+            (vigy-trace "ever" (vigy-converged? "x"))
+            (vigy-emit "custom" (vigy-get "seeded"))
+            "#,
+        ] {
+            let before = LispReconciler::standard(program).tick(tick()).await.unwrap();
+            let now = ProgramReconciler::new(Language::default(), program, standard_extensions())
+                .tick(tick())
+                .await
+                .unwrap();
+            let kinds = |h: &VigyHost| h.actions.iter().map(|a| a.kind).collect::<Vec<_>>();
+            let logs = |h: &VigyHost| {
+                h.log
+                    .iter()
+                    .map(|l| (l.level, l.message.clone()))
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(kinds(&now), kinds(&before));
+            assert_eq!(logs(&now), logs(&before));
+            assert_eq!(now.kv, before.kv);
+            assert_eq!(now.desired, before.desired);
+            assert_eq!(now.observed, before.observed);
+            assert_eq!(now.trace, before.trace);
+            assert!(!kinds(&now).is_empty());
+        }
+        let h = evaluate("(vigy-log \"info\" \"hello from a vigy\") (vigy-noop)", VigyHost::default()).unwrap();
+        assert_eq!(h.log[0].level, LogLevel::Info);
+        assert_eq!(h.actions[0].kind, ReconcileKind::Noop);
+    }
+
+    #[test]
+    fn the_blue_surface_is_the_tatara_surface_respelled() {
+        let tatara: BTreeMap<&str, Arity> = TATARA
+            .iter()
+            .flat_map(|rows| rows.iter())
+            .map(|r| (r.name, r.arity))
+            .collect();
+        let blue: BTreeMap<String, &HostFn> = <VigyHost as Host>::SURFACE
+            .iter()
+            .map(|f| (f.name.replace('_', "-"), f))
+            .collect();
+        assert_eq!(
+            blue.keys().map(String::as_str).collect::<Vec<_>>(),
+            tatara.keys().copied().collect::<Vec<_>>()
+        );
+        assert_eq!(blue.len(), 30);
+        for (name, f) in &blue {
+            let least = match tatara[name.as_str()] {
+                Arity::Exact(n) | Arity::AtLeast(n) | Arity::Range(n, _) => n,
+                Arity::Any => 0,
+            };
+            assert_eq!(f.required, least, "{name}");
+            assert!(f.name.starts_with("vigy_"), "{}", f.name);
+        }
     }
 }

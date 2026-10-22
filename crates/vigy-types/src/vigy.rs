@@ -3,6 +3,7 @@
 use crate::error::{Error, Result};
 use crate::id::VigyId;
 use crate::label::Labels;
+use crate::language::Language;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use utoipa::ToSchema;
@@ -49,8 +50,10 @@ impl Default for TickInterval {
 pub struct Vigy {
     pub id: VigyId,
     pub name: String,
-    /// Raw tatara-lisp source. Evaluated on every tick.
+    /// Raw source in `language`. Evaluated on every tick.
     pub program: String,
+    #[serde(default)]
+    pub language: Language,
     pub tick_interval: TickInterval,
     pub enabled: bool,
     pub created_at: time::OffsetDateTime,
@@ -65,17 +68,27 @@ impl Vigy {
         program: impl Into<String>,
         tick_interval: TickInterval,
     ) -> Result<Self> {
+        Self::in_language(name, program, Language::TataraLisp, tick_interval)
+    }
+
+    pub fn in_language(
+        name: impl Into<String>,
+        program: impl Into<String>,
+        language: Language,
+        tick_interval: TickInterval,
+    ) -> Result<Self> {
         let name = name.into();
         let program = program.into();
         if program.trim().is_empty() {
             return Err(Error::EmptyProgram);
         }
-        let id = VigyId::from_name_and_program(&name, &program);
+        let id = VigyId::from_parts(&name, &program, language);
         let now = time::OffsetDateTime::now_utc();
         Ok(Self {
             id,
             name,
             program,
+            language,
             tick_interval,
             enabled: true,
             created_at: now,
@@ -107,5 +120,25 @@ mod tests {
     fn empty_program_rejected() {
         let r = Vigy::new("x", "", TickInterval::default());
         assert!(matches!(r, Err(Error::EmptyProgram)));
+    }
+
+    #[test]
+    fn a_vigy_serialised_before_languages_reads_as_tatara_lisp() {
+        let mut json = serde_json::to_value(
+            Vigy::new("x", "(vigy-noop)", TickInterval::default()).unwrap(),
+        )
+        .unwrap();
+        json.as_object_mut().unwrap().remove("language");
+        let v: Vigy = serde_json::from_value(json).unwrap();
+        assert_eq!(v.language, Language::TataraLisp);
+    }
+
+    #[test]
+    fn a_blue_vigy_carries_its_language_and_its_own_id() {
+        let t = Vigy::new("x", "vigy_noop()", TickInterval::default()).unwrap();
+        let b = Vigy::in_language("x", "vigy_noop()", Language::Blue, TickInterval::default())
+            .unwrap();
+        assert_eq!(b.language, Language::Blue);
+        assert_ne!(t.id, b.id);
     }
 }

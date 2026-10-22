@@ -10,6 +10,7 @@ pub struct Model {
     pub id: String,
     pub name: String,
     pub program: String,
+    pub language: String,
     pub tick_interval_ms: i64,
     pub enabled: bool,
     pub created_at: String,

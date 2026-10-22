@@ -87,6 +87,7 @@ impl SeaormStore {
             id: Set(v.id.to_string()),
             name: Set(v.name.clone()),
             program: Set(v.program.clone()),
+            language: Set(v.language.to_string()),
             tick_interval_ms: Set(v.tick_interval.as_millis() as i64),
             enabled: Set(v.enabled),
             created_at: Set(v.created_at.format(&time::format_description::well_known::Rfc3339).unwrap()),
@@ -340,6 +341,7 @@ fn model_to_vigy(m: vigy::Model) -> Result<Vigy> {
         id,
         name: m.name,
         program: m.program,
+        language: m.language.parse()?,
         tick_interval,
         enabled: m.enabled,
         created_at,
@@ -397,6 +399,17 @@ mod tests {
         assert_eq!(got.name, "test");
         let all = s.list_vigies(None).await.unwrap();
         assert_eq!(all.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn each_language_round_trips_through_the_store() {
+        let s = Store::open_in_memory().await.unwrap();
+        for language in vigy_types::Language::ALL {
+            let v = Vigy::in_language("l", "vigy_noop()", language, TickInterval::default())
+                .unwrap();
+            s.upsert_vigy(&v).await.unwrap();
+            assert_eq!(s.get_vigy(&v.id).await.unwrap().language, language);
+        }
     }
 
     #[tokio::test]

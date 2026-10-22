@@ -75,6 +75,7 @@ colored = "2.1"
 # consolidation removed. One registry version, everywhere.
 tatara-lisp = { version = "0.4" }
 tatara-lisp-eval = { version = "0.4" }
+blue-lang-host = { version = "0.0.85" }
 
 # Pleme-io substrate primitives
 shikumi = { version = "0.1" }

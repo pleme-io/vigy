@@ -17,12 +17,19 @@ import "google/protobuf/struct.proto";
 message Vigy {
   string id = 1;                              // BLAKE3-derived stable id
   string name = 2;                            // operator-visible
-  string program = 3;                         // raw tatara-lisp source
+  string program = 3;                         // raw source in `language`
   google.protobuf.Duration tick_interval = 4; // how often to run
   bool enabled = 5;
   google.protobuf.Timestamp created_at = 6;
   google.protobuf.Timestamp updated_at = 7;
   map<string, string> labels = 8;             // operator-attached metadata
+  Language language = 9;                      // unspecified reads as tatara-lisp
+}
+
+enum Language {
+  LANGUAGE_UNSPECIFIED = 0;
+  LANGUAGE_TATARA_LISP = 1;
+  LANGUAGE_BLUE = 2;
 }
 
 // Snapshot of what a vigy currently "sees" + intends.
@@ -84,6 +91,7 @@ message RegisterRequest {
   google.protobuf.Duration tick_interval = 3;
   bool enabled = 4;
   map<string, string> labels = 5;
+  Language language = 6;
 }
 message UpdateRequest {
   string id = 1;

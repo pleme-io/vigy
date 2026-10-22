@@ -19,3 +19,4 @@ tracing = { workspace = true }
 async-trait = { workspace = true }
 tatara-lisp = { workspace = true }
 tatara-lisp-eval = { workspace = true }
+blue-lang-host = { workspace = true }

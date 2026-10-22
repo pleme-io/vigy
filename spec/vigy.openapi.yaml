@@ -179,7 +179,8 @@ components:
         name: { type: string }
         program:
           type: string
-          description: tatara-lisp source
+          description: source in `language`
+        language: { $ref: '#/components/schemas/Language' }
         tick_interval_ms:
           type: integer
           minimum: 100
@@ -189,12 +190,17 @@ components:
         labels:
           type: object
           additionalProperties: { type: string }
+    Language:
+      type: string
+      enum: [tatara-lisp, blue]
+      default: tatara-lisp
     RegisterVigy:
       type: object
       required: [name, program]
       properties:
         name: { type: string }
         program: { type: string }
+        language: { $ref: '#/components/schemas/Language' }
         tick_interval_ms:
           type: integer
           default: 1000
