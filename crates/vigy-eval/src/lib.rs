@@ -88,7 +88,7 @@
 //! the runtime), evaluates, returns the host (now populated). The
 //! runtime drains buffers + persists dirty kv keys.
 
-use blue_lang_host::{host, host_effect_names, Budget, Entry, Program};
+use blue_lang_host::{host, host_effect_names, Budget, Canonical, Entry, Program};
 use serde_json::Value as JsonValue;
 use std::collections::BTreeMap;
 use tatara_lisp::read_spanned;
@@ -919,6 +919,15 @@ fn hosted_frame(name: &str) -> bool {
         .contains(name)
 }
 
+pub const BLUE_TICK_FUEL: usize = 5_000_000;
+
+fn program_budget() -> Budget {
+    Budget {
+        fuel: Some(BLUE_TICK_FUEL),
+        ..Budget::tree_walker_default()
+    }
+}
+
 pub fn evaluate_blue(
     program: &str,
     mut host: VigyHost,
@@ -928,9 +937,9 @@ pub fn evaluate_blue(
     for ext in extensions {
         load = load.extend(move |interp: &mut Interpreter<VigyHost>| ext.install_blue(interp));
     }
-    load.frame(&hosted_frame, Budget::tree_walker_default())
-        .load(&mut host)
-        ?;
+    load.canonical(Canonical::AsWritten)
+        .frame(&hosted_frame, program_budget())
+        .load(&mut host)?;
     Ok(host)
 }
 
@@ -1532,6 +1541,13 @@ vigy_set("backoff", vigy_backoff_ms(3))
         assert!(err.contains("vigy_incr") && err.contains("integer delta"), "{err}");
         let err = blue_err("vigy_emit()\n");
         assert!(err.contains("vigy_emit"), "{err}");
+    }
+
+    #[test]
+    fn a_blue_vigy_need_not_be_canonically_formatted_and_a_loop_stops_at_its_budget() {
+        let h = blue("vigy_noop(  )\n", VigyHost::default());
+        assert_eq!(h.actions.len(), 1);
+        assert!(blue_err("while(true, 1)\n").contains("fuel"), "the budget names itself");
     }
 
     #[test]
