@@ -11,7 +11,6 @@ the tatara path. The 30 intrinsics are ONE `#[host(prefix = "vigy_")] impl
 VigyHost` block; blue names are the tatara names with `-` spelled `_`.
 Detail, the arity test and `HostExtension` rules: [docs/two-languages.md](docs/two-languages.md).
 
-> **Theory:** `pleme-io/theory/VIGY.md` (canonical: blue authoring, one platform, per-tick surfaces)
 > **Operator doc:** `pleme-io/docs/vigy.md` (TODO)
 > **Skill:** `pleme-io/blackmatter-pleme/skills/vigy/SKILL.md`
 > **Family:** mado (primary embedder), tear (co-host), arnes, escriba,
